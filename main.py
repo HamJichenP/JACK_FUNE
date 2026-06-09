@@ -21,7 +21,6 @@ def main():
 
     # 2. 讀取並驗證必要環境變數 (防禦性設計)
     discord_token = os.getenv("DISCORD_TOKEN")
-    sheets_key = os.getenv("GOOGLE_SHEETS_KEY")
 
     # 檢查 Token 是否存在或是否仍為預設的 placeholder
     if not discord_token or discord_token == "your_discord_token_here":
@@ -30,26 +29,13 @@ def main():
         print("程式即將關閉。")
         sys.exit(1)
 
-    if not sheets_key or sheets_key == "your_google_sheets_key_here":
-        # 這是非致命錯誤，僅發出警告，暫不中止程式
-        print("[系統警告] 找不到有效的 Google Sheets Key，寫入功能將僅以模擬模式運行。")
-        sheets_key = "MOCK_KEY"
-
     # 3. 初始化儲存模組與機器人
     try:
-        # 初始化儲存模組
-        storage = StorageSheets(spreadsheet_key=sheets_key)
+        # 初始化儲存模組，會自動尋找同目錄下的 creds.json
+        storage = StorageSheets(creds_path="creds.json")
         
-        # 讀取並處理特定身分組篩選清單 (以半形逗號分割)
-        target_roles_str = os.getenv("TARGET_ROLES", "")
-        target_roles = [r.strip() for r in target_roles_str.split(",") if r.strip()]
-        if target_roles:
-            print(f"[系統] 已設定特定身分組篩選白名單: {target_roles}")
-        else:
-            print("[系統] 未設定特定身分組，將抓取使用者擁有的所有身分組。")
-
-        # 初始化機器人，將儲存模組與篩選清單傳遞進去
-        bot = DiscordBot(storage_client=storage, target_roles=target_roles)
+        # 初始化機器人，將儲存模組傳遞進去 (試算表金鑰與身分組已改為在各伺服器獨立設定)
+        bot = DiscordBot(storage_client=storage)
         
     except Exception as e:
         print(f"[系統錯誤] 模組初始化失敗: {e}")
