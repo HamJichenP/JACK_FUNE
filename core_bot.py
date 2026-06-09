@@ -49,7 +49,8 @@ class DiscordBot(discord.Client):
     async def on_ready(self):
         """當機器人成功登入並準備就緒時觸發"""
         print(f"[Bot] 機器人已成功上線！")
-        print(f"[Bot] 登入帳號：{self.user.name} (ID: {self.user.id})")
+        if self.user:
+            print(f"[Bot] 登入帳號：{self.user.name} (ID: {self.user.id})")
         print("--------------------------------------------------")
 
     async def on_message(self, message: discord.Message):
@@ -141,7 +142,7 @@ class DiscordBot(discord.Client):
 
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         """當使用者對任何訊息點擊表情符號時觸發"""
-        if payload.user_id == self.user.id:
+        if self.user is None or payload.user_id == self.user.id:
             return
 
         # 防禦性檢查：排除沒有伺服器 ID 的私訊 (DM) 反應
