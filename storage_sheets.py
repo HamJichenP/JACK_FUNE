@@ -69,6 +69,9 @@ class StorageSheets:
 
         # 正式連線寫入
         try:
+            if not self.gc:
+                print("[Storage][錯誤] 未成功與 Google Sheets 建立連線，無法寫入。")
+                return False
             # 1. 開啟試算表
             spreadsheet = self.gc.open_by_key(spreadsheet_key)
             
