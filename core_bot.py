@@ -58,6 +58,10 @@ class DiscordBot(discord.Client):
         if message.author == self.user:
             return
 
+        # 防禦性檢查：排除私訊 (DM)，所有設定指令只能在伺服器頻道中使用
+        if message.guild is None:
+            return
+
         # 1. 連線測試指令
         if message.content.lower() == "!ping":
             await message.channel.send("🏓 pong! 機器人運作正常！")
@@ -138,6 +142,10 @@ class DiscordBot(discord.Client):
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         """當使用者對任何訊息點擊表情符號時觸發"""
         if payload.user_id == self.user.id:
+            return
+
+        # 防禦性檢查：排除沒有伺服器 ID 的私訊 (DM) 反應
+        if not payload.guild_id:
             return
 
         # 1. 取得對應伺服器設定
