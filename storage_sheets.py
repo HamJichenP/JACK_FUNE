@@ -93,7 +93,7 @@ class StorageSheets:
             print(f"[Storage][錯誤] 寫入 Google Sheets 時發生未知異常: {e}")
             return False
 
-    def create_and_share_sheet(self, spreadsheet_title: str, user_email: str, template_key: str = None) -> str:
+    def create_and_share_sheet(self, spreadsheet_title: str, user_email: str, template_key: str | None = None) -> str:
         """
         建立或複製一份試算表，並自動共享給指定的 Google Email (編輯者權限)。
         
