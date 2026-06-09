@@ -92,3 +92,59 @@ class StorageSheets:
         except Exception as e:
             print(f"[Storage][錯誤] 寫入 Google Sheets 時發生未知異常: {e}")
             return False
+
+    def create_and_share_sheet(self, spreadsheet_title: str, user_email: str, template_key: str = None) -> str:
+        """
+        建立或複製一份試算表，並自動共享給指定的 Google Email (編輯者權限)。
+        
+        :param spreadsheet_title: 新試算表的標題名稱
+        :param user_email: 要共享的 Google 信箱
+        :param template_key: 模板試算表 Key (選填，若提供則會複製該模板)
+        :return: 建立好的新試算表金鑰 ID，若失敗則回傳空字串
+        """
+        # 防禦性檢查：信箱與標題不能為空
+        if not spreadsheet_title or not user_email:
+            print("[Storage][錯誤] 建立試算表失敗，標題與使用者信箱不可為空。")
+            return ""
+
+        if self.mock_mode:
+            print(f"[Storage][模擬模式] 成功模擬建立新表: 標題={spreadsheet_title}, 共享給={user_email}, 模板={template_key}")
+            return "MOCK_NEW_SHEET_KEY"
+
+        try:
+            if not self.gc:
+                print("[Storage][錯誤] 未成功與 Google Sheets 建立連線，無法建立。")
+                return ""
+
+            new_spreadsheet = None
+
+            # 1. 建立或複製試算表
+            if template_key:
+                try:
+                    print(f"[Storage] 正在自模板複製試算表 (範本 Key: {template_key})...")
+                    new_spreadsheet = self.gc.copy(template_key, title=spreadsheet_title)
+                    print(f"[Storage] 成功自模板複製，新金鑰 ID: {new_spreadsheet.id}")
+                except Exception as e:
+                    print(f"[Storage][警告] 無法自模板複製試算表 ({e})。改為建立空白試算表。")
+                    new_spreadsheet = None
+
+            # 若沒有 template_key 或複製失敗，則建立空白試算表並初始化標題
+            if not new_spreadsheet:
+                print(f"[Storage] 正在建立空白試算表: '{spreadsheet_title}'...")
+                new_spreadsheet = self.gc.create(spreadsheet_title)
+                
+                # 初始化空白試算表的標題欄
+                worksheet = new_spreadsheet.get_worksheet(0)
+                worksheet.append_row(["名字", "身分組", "報名日期"])
+                print(f"[Storage] 成功建立空白試算表並寫入標題，新金鑰 ID: {new_spreadsheet.id}")
+
+            # 2. 自動將新試算表共享給使用者的 Google Email (給予編輯者權限)
+            print(f"[Storage] 正在將試算表權限共享給 {user_email} (編輯者權限)...")
+            new_spreadsheet.share(user_email, perm_type='user', role='writer', notify=True)
+            print(f"[Storage] 權限共享成功！")
+
+            return new_spreadsheet.id
+
+        except Exception as e:
+            print(f"[Storage][錯誤] 建立或共享試算表時發生異常: {e}")
+            return ""

@@ -209,6 +209,7 @@ class DiscordBot(discord.Client):
             server_cfg = config.get(guild_id, {})
             
             sheet_key = server_cfg.get("google_sheets_key", "尚未設定")
+            template_key = server_cfg.get("template_sheets_key", "尚未設定")
             target_roles = server_cfg.get("target_roles", [])
             roles_display = ", ".join(target_roles) if target_roles else "記錄所有身分組 (排除 @everyone)"
             
@@ -217,8 +218,9 @@ class DiscordBot(discord.Client):
                 color=discord.Color.blue()
             )
             embed.add_field(name="Google 試算表金鑰", value=f"`{sheet_key}`", inline=False)
+            embed.add_field(name="設定的模板金鑰", value=f"`{template_key}`", inline=False)
             embed.add_field(name="篩選身分組白名單", value=roles_display, inline=False)
-            embed.set_footer(text="提示：使用 !setup_sheet 與 !setup_roles 進行修改")
+            embed.set_footer(text="提示：使用 !setup_sheet、!setup_template、!setup_roles 與 !create_sheet 進行設定")
             
             await message.channel.send(embed=embed)
             return
@@ -244,6 +246,96 @@ class DiscordBot(discord.Client):
                 await message.delete()
             except Exception as e:
                 print(f"[Bot][警告] 無法刪除管理員設定指令訊息: {e}")
+            return
+
+        # 6. 設定模板試算表金鑰指令 (!setup_template <Key>)
+        if message.content.startswith("!setup_template"):
+            if not message.author.guild_permissions.administrator:
+                await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                return
+
+            parts = message.content.split(maxsplit=1)
+            guild_id = str(message.guild.id)
+            config = self.load_config()
+            if guild_id not in config:
+                config[guild_id] = {}
+
+            if len(parts) < 2 or parts[1].strip().lower() == "none":
+                config[guild_id]["template_sheets_key"] = ""
+                self.save_config(config)
+                await message.channel.send("✅ 已清除此伺服器的模板設定。未來建立新表時將建立空白試算表。")
+                print(f"[Bot][設定] 伺服器 {message.guild.name} (ID: {guild_id}) 已清除模板設定。")
+            else:
+                template_key = parts[1].strip()
+                config[guild_id]["template_sheets_key"] = template_key
+                self.save_config(config)
+                await message.channel.send(f"✅ 已成功設定此伺服器的模板試算表金鑰！\n模板金鑰：`{template_key}`")
+                print(f"[Bot][設定] 伺服器 {message.guild.name} (ID: {guild_id}) 設定模板金鑰：{template_key}")
+            return
+
+        # 7. 一鍵自動建立與共享試算表指令 (!create_sheet <Email>)
+        if message.content.startswith("!create_sheet"):
+            if not message.author.guild_permissions.administrator:
+                await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                return
+
+            parts = message.content.split(maxsplit=1)
+            if len(parts) < 2:
+                await message.channel.send("❌ 用法錯誤！請使用：`!create_sheet <您的Google帳號信箱 (Email)>`\n例如：`!create_sheet user@gmail.com`")
+                return
+
+            user_email = parts[1].strip()
+            if "@" not in user_email or "." not in user_email:
+                await message.channel.send("❌ 請提供正確的 Google 信箱格式！")
+                return
+
+            guild_id = str(message.guild.id)
+            config = self.load_config()
+            server_cfg = config.get(guild_id, {})
+            template_key = server_cfg.get("template_sheets_key")
+
+            status_message = await message.channel.send("⏳ 正在與 Google API 通訊，建立並共享試算表中，請稍候...")
+
+            spreadsheet_title = f"Discord活動報名表-{message.guild.name}"
+            
+            # 呼叫建立與共享
+            new_sheet_key = self.storage.create_and_share_sheet(
+                spreadsheet_title=spreadsheet_title,
+                user_email=user_email,
+                template_key=template_key if template_key else None
+            )
+
+            if not new_sheet_key:
+                await status_message.edit(
+                    content="❌ **試算表建立或共享權限失敗！**\n"
+                            "請確認以下事項：\n"
+                            "1. 專案根目錄的 `creds.json` 設定是否正確。\n"
+                            "2. Google Sheets API 與 Google Drive API 是否已在 Google Cloud Console 中啟用。\n"
+                            "3. **您的 Google 雲端硬碟空間或該服務帳戶的空間是否已滿**（超限會導致無法建立新檔案）。"
+                )
+                return
+
+            # 成功後，自動更新該伺服器的 google_sheets_key
+            if guild_id not in config:
+                config[guild_id] = {}
+            config[guild_id]["google_sheets_key"] = new_sheet_key
+            self.save_config(config)
+
+            # 發送成功 Embed
+            embed = discord.Embed(
+                title="🎉 Google 試算表一鍵綁定成功！",
+                description=f"已成功建立或複製專屬本伺服器的活動報名表，且已將編輯權限共享給您指定的 Google 帳號！",
+                color=discord.Color.brand_green()
+            )
+            embed.add_field(name="試算表標題", value=f"`{spreadsheet_title}`", inline=False)
+            embed.add_field(name="已共用編輯信箱", value=f"`{user_email}`", inline=False)
+            embed.add_field(name="目前綁定試算表金鑰", value=f"`{new_sheet_key}`", inline=False)
+            embed.add_field(name="🔗 試算表連結", value=f"[點此打開您的 Google 試算表](https://docs.google.com/spreadsheets/d/{new_sheet_key})", inline=False)
+            embed.set_footer(text="提示：現在您可以使用 !setup_buttons 部署報名按鈕囉！")
+
+            await status_message.delete()
+            await message.channel.send(embed=embed)
+            print(f"[Bot][建立] 伺服器 {message.guild.name} (ID: {guild_id}) 已由管理員一鍵建立試算表並綁定成功。")
             return
 
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
