@@ -186,13 +186,12 @@ class DiscordBot(discord.Client):
             roles = [role.name for role in member.roles if role.name != "@everyone"]
 
         print(f"[Bot] 伺服器 {guild.name} 偵測到表情符號互動：")
-        print(f" - 名字: {member.display_name} (帳號: {member.name})")
+        print(f" - 名字: {member.display_name}")
         print(f" - 身分組: {roles}")
 
         # 4. 呼叫儲存模組寫入資料 (動態帶入此伺服器的 sheet_key)
         self.storage.write_user_data(
             spreadsheet_key=sheet_key,
             display_name=member.display_name,
-            username=member.name,
             roles=roles
         )
