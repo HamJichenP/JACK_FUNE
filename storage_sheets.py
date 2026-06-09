@@ -41,13 +41,14 @@ class StorageSheets:
             print(f"[Storage][錯誤] 憑證授權失敗: {e}")
             print("[Storage][提示] 連線失敗，切換為【模擬模式】。")
             self.mock_mode = True
-    def write_user_data(self, spreadsheet_key: str, display_name: str, roles: list[str]) -> bool:
+    def write_user_data(self, spreadsheet_key: str, display_name: str, roles: list[str], registered_day: str = "未指定") -> bool:
         """
-        將使用者的顯示名稱 (暱稱) 與身分組資訊寫入指定的 Google 試算表。
+        將使用者的顯示名稱 (暱稱) 與身分組資訊及報名日期寫入指定的 Google 試算表。
         
         :param spreadsheet_key: 該伺服器所設定的 Google 試算表 Key
         :param display_name: 使用者的顯示名稱 / 暱稱 (字串)
         :param roles: 使用者目前擁有的身分組名稱清單
+        :param registered_day: 報名的日期 (例如 "星期六" 或 "星期日"，預設為 "未指定")
         :return: 寫入成功返回 True，失敗則返回 False
         """
         # 防禦性檢查：防範輸入為 None 或格式不正確
@@ -60,7 +61,7 @@ class StorageSheets:
         # 模擬模式或試算表金鑰無效時，使用模擬寫入
         if self.mock_mode or not spreadsheet_key or spreadsheet_key == "MOCK_KEY":
             print(f"[Storage][模擬寫入] 成功寫入資料 (試算表 Key: {spreadsheet_key}) -> "
-                  f"名字: {display_name}, 身分組: {roles_str}")
+                  f"名字: {display_name}, 身分組: {roles_str}, 報名日期: {registered_day}")
             return True
 
         # 正式連線寫入
@@ -74,13 +75,13 @@ class StorageSheets:
             # 2. 取得第一個分頁 (Worksheet)
             worksheet = spreadsheet.get_worksheet(0)
             
-            # 3. 準備寫入的一列資料 (名字, 身分組)
-            row_data = [display_name, roles_str]
+            # 3. 準備寫入的一列資料 (名字, 身分組, 報名日期)
+            row_data = [display_name, roles_str, registered_day]
             
             # 4. 新增一列到最後面
             worksheet.append_row(row_data)
             
-            print(f"[Storage] 已成功將資料寫入試算表 (Key: {spreadsheet_key})")
+            print(f"[Storage] 已成功將資料寫入試算表 (Key: {spreadsheet_key}) - 名字: {display_name}, 身分組: {roles_str}, 日期: {registered_day}")
             return True
         except gspread.exceptions.APIError as e:
             print(f"[Storage][錯誤] Google API 呼叫錯誤: {e}")

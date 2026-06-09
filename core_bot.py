@@ -10,6 +10,85 @@ from storage_sheets import StorageSheets
 
 CONFIG_FILE = "server_config.json"
 
+class RegistrationView(discord.ui.View):
+    def __init__(self, bot: 'DiscordBot'):
+        """
+        初始化持久化報名按鈕視圖。
+        設定 timeout=None 是持久化視圖的關鍵，這表示視圖不會因逾時而失效。
+        """
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    async def handle_registration(self, interaction: discord.Interaction, day: str):
+        """共通的報名處理邏輯"""
+        guild = interaction.guild
+        member = interaction.user
+
+        # 防禦性檢查：確保是在伺服器中，且發起人為 Member 類型
+        if guild is None or not isinstance(member, discord.Member):
+            await interaction.response.send_message("❌ 此功能僅限於伺服器頻道中使用。", ephemeral=True)
+            return
+
+        guild_id = str(guild.id)
+        config = self.bot.load_config()
+        server_cfg = config.get(guild_id, {})
+
+        sheet_key = server_cfg.get("google_sheets_key")
+        if not sheet_key:
+            await interaction.response.send_message("❌ 此伺服器尚未設定 Google 試算表金鑰，無法進行報名。請聯絡管理員設定。", ephemeral=True)
+            return
+
+        target_roles = server_cfg.get("target_roles", [])
+
+        # 過濾身分組
+        if target_roles:
+            roles = [role.name for role in member.roles if role.name in target_roles]
+        else:
+            roles = [role.name for role in member.roles if role.name != "@everyone"]
+
+        # 先延遲回應 (Defer)，避免寫入 Google Sheets API 時因為超過 3 秒而造成互動逾時錯誤
+        await interaction.response.defer(ephemeral=True)
+
+        print(f"[Bot] 偵測到按鈕互動報名：伺服器={guild.name}, 成員={member.display_name}, 日期={day}, 身分組={roles}")
+
+        # 呼叫寫入
+        success = self.bot.storage.write_user_data(
+            spreadsheet_key=sheet_key,
+            display_name=member.display_name,
+            roles=roles,
+            registered_day=day
+        )
+
+        if success:
+            roles_display = ", ".join(roles) if roles else "無身分組"
+            await interaction.followup.send(
+                f"✅ **報名成功！**\n"
+                f"📅 報名日期：`{day}`\n"
+                f"👤 登記名稱：`{member.display_name}`\n"
+                f"🏷️ 登記身分組：`{roles_display}`",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                "❌ **報名失敗！**\n"
+                "寫入 Google 試算表時發生錯誤，請聯絡伺服器管理員確認：\n"
+                "1. 試算表金鑰是否正確\n"
+                "2. 試算表是否已共享給機器人服務帳戶的 Email\n"
+                "3. Google Sheets API 與 Google Drive API 是否已在 Cloud Console 啟用",
+                ephemeral=True
+            )
+
+    # 星期六報名按鈕，設定唯一的 custom_id 是持久化視圖重啟後能繼續運作的關鍵
+    @discord.ui.button(label="星期六 報名", style=discord.ButtonStyle.primary, custom_id="btn_register_saturday", emoji="💙")
+    async def register_saturday(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_registration(interaction, "星期六")
+
+    # 星期日報名按鈕
+    @discord.ui.button(label="星期日 報名", style=discord.ButtonStyle.success, custom_id="btn_register_sunday", emoji="💚")
+    async def register_sunday(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_registration(interaction, "星期日")
+
+
 class DiscordBot(discord.Client):
     def __init__(self, storage_client: StorageSheets):
         """
@@ -51,6 +130,10 @@ class DiscordBot(discord.Client):
         print(f"[Bot] 機器人已成功上線！")
         if self.user:
             print(f"[Bot] 登入帳號：{self.user.name} (ID: {self.user.id})")
+        
+        # 註冊 Persistent View 讓舊按鈕在機器人重啟後依然有效
+        self.add_view(RegistrationView(self))
+        print("[Bot] 已成功註冊持久化按鈕視圖 (Persistent View)")
         print("--------------------------------------------------")
 
     async def on_message(self, message: discord.Message):
@@ -140,6 +223,29 @@ class DiscordBot(discord.Client):
             await message.channel.send(embed=embed)
             return
 
+        # 5. 部署報名按鈕指令 (!setup_buttons)
+        if message.content.lower() == "!setup_buttons":
+            if not message.author.guild_permissions.administrator:
+                await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                return
+
+            embed = discord.Embed(
+                title="📅 週末活動快速報名",
+                description="請點擊下方按鈕選擇您想報名的日期。\n"
+                            "系統會自動擷取您的**顯示名稱**與**身分組**寫入至 Google 試算表。\n\n"
+                            "🔹 點選 **星期六 報名** 登記週六活動\n"
+                            "🔸 點選 **星期日 報名** 登記週日活動\n\n"
+                            "*備註：此按鈕會以「隱密訊息 (Ephemeral)」回覆，不會洗版頻道。*",
+                color=discord.Color.dark_teal()
+            )
+            view = RegistrationView(self)
+            await message.channel.send(embed=embed, view=view)
+            try:
+                await message.delete()
+            except Exception as e:
+                print(f"[Bot][警告] 無法刪除管理員設定指令訊息: {e}")
+            return
+
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         """當使用者對任何訊息點擊表情符號時觸發"""
         if self.user is None or payload.user_id == self.user.id:
@@ -193,5 +299,6 @@ class DiscordBot(discord.Client):
         self.storage.write_user_data(
             spreadsheet_key=sheet_key,
             display_name=member.display_name,
-            roles=roles
+            roles=roles,
+            registered_day="反應報名"
         )

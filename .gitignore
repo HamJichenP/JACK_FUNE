@@ -66,3 +66,7 @@ Thumbs.db
 # Force include .venv regardless of other rules
 !.venv
 !.venv/**
+
+# Google OAuth Credentials
+creds.json
+
