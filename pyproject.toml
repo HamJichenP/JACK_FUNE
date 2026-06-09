@@ -1,2 +1,8 @@
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+
 [tool.pyrefly]
 python-interpreter-path = ".venv/Scripts/python.exe"
+venvPath = "."
+venv = ".venv"
