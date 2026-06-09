@@ -15,42 +15,37 @@
 * **未來擴充目標**：未來計畫將資料儲存端從 Google 試算表替換為 Web 架構（如關聯式資料庫與網頁後台）。
 
 ## 🏗️ 系統架構與實體路徑 (Architecture & Directory)
-* **專案實體路徑**：`C:\Users\User\Jack\DC`
+* **專案實體路徑**：`f:\JACKFUN\DC`
 * **資料夾結構**：
   ```text
   DC/
-  ├── .venv/               # Python 虛擬環境資料夾
-  ├── .env                 # 存放 Discord Token 與 Google API 憑證 (絕不寫死在程式碼中)
+  ├── .venv/               # Python 虛擬環境資料夾 (不納入 Git 追蹤)
+  ├── .vscode/             # VS Code 專案設定資料夾
+  │   └── settings.json    # 自動設定本地 .venv 直譯器
+  ├── .env                 # 存放 Discord Token (機密金鑰，不納入 Git)
   ├── requirements.txt     # 記錄相依套件 (discord.py, python-dotenv, gspread)
-  ├── main.py              # 程式進入點：負責載入環境變數、初始化模組與啟動機器人
-  ├── core_bot.py          # 核心互動邏輯：專責 Discord 互動 (監聽表情符號、白名單過濾身分組)
-  ├── storage_sheets.py    # 儲存模組：專責 Google Sheets 串接與寫入邏輯
+  ├── pyproject.toml       # Pyrefly & Pyright 靜態分析設定檔 (指定虛擬環境路徑)
+  ├── server_config.json   # 儲存各伺服器的金鑰與身分組設定檔
+  ├── main.py              # 程式進入點：負責啟動機器人
+  ├── core_bot.py          # 核心互動邏輯：處理指令 (!setup_sheet, !setup_roles, !setup_show)、表情符號事件與寫入呼叫
+  ├── storage_sheets.py    # 儲存模組：實作 gspread 動態金鑰寫入，並包含防禦性模擬模式
   └── project_context.md   # 本專案上下文文件 (提供給 AI 助手快速讀取)
   ```
 
 ## ⚙️ 環境變數設定 (.env)
 * **DISCORD_TOKEN**：機器人登入 Token (已從 Discord Developer Portal 取得並設定)。
-* **GOOGLE_SHEETS_KEY**：Google 試算表 Key (待設定)。
-* **TARGET_ROLES**：要篩選的特定身分組白名單，以半形逗號分開。例如：`管理員,組長,VIP`。
 
 ## ⏳ 目前進度 (Current Status)
 1. **已完成**：
-   * 在 `C:\Users\User\Jack\DC` 建立完整專案結構與骨架。
-   * 成功建置 Python 虛擬環境 (`.venv`) 並安裝 `discord.py`、`python-dotenv` 與 `gspread`。
-   * 完成 Discord Developer Portal 的機器人設置，並開啟 `Server Members Intent` 與 `Message Content Intent` 特權意圖。
-   * 完成機器人「百業戰報名」的伺服器邀請，順利加入測試伺服器。
-   * 完成 `main.py` 與 `core_bot.py` 的基礎程式碼，機器人已能成功連線並回覆 `!ping`。
-   * 完成「特定身分組白名單過濾」功能，並與 `.env` 連動。
+   * 在 `f:\JACKFUN\DC` 建立完整專案結構與環境。
+   * 成功建置 Python 虛擬環境 (`.venv`) 並排除了 Git 追蹤。
+   * 完成 `.vscode/settings.json` 與 `pyproject.toml` 設定，解決了 Pyrefly 所有型態警告與紅字問題。
+   * 成功重構專案為「多伺服器獨立設定」架構：
+     * 支援伺服器管理員以指令設定試算表與篩選身分組，並自動寫入 `server_config.json`。
+     * 完成 `storage_sheets.py` 透過 `gspread` 動態打開指定試算表並寫入資料的邏輯。
+     * `storage_sheets.py` 內建防禦性「模擬模式」，即使無憑證亦不閃退。
+   * 機器人已在本地背景成功連線執行，連線正常。
 2. **待進行**：
-   * 申請 Google Cloud 專案並開通 Google Sheets API 與 Google Drive API，取得憑證 JSON 檔案。
-   * 實作 `storage_sheets.py`，串接實際的寫入邏輯。
+   * 申請 Google Cloud 專案並取得服務帳戶憑證 `creds.json` 放至專案目錄。
+   * 建立您的 Google 試算表，將服務帳戶 Email 加入共用，並使用 `!setup_sheet` 進行伺服器設定與最終寫入驗證。
 
-## ➡️ 下一步任務 (Next Action)
-1. **設定 Google Cloud 憑證**：
-   * 指導使用者前往 Google Cloud Console 建立專案。
-   * 啟用 Google Sheets API 及 Google Drive API。
-   * 建立「服務帳戶 (Service Account)」，並下載其 JSON 憑證金鑰檔，命名為 `creds.json` 放入專案目錄。
-2. **共用試算表權限**：
-   * 指導使用者建立一個 Google 試算表，並將「服務帳戶的 Email」設為該試算表的共用協作者（權限為編輯者）。
-3. **實作 Google Sheets 寫入邏輯**：
-   * 撰寫 `storage_sheets.py`，使用 `gspread` 讀取 `creds.json`，完成對 Google 試算表的資料寫入。
