@@ -58,8 +58,8 @@ class DiscordBot(discord.Client):
         if message.author == self.user:
             return
 
-        # 防禦性檢查：排除私訊 (DM)，所有設定指令只能在伺服器頻道中使用
-        if message.guild is None:
+        # 防禦性檢查：排除私訊 (DM) 且確保作者為伺服器成員 (Member)
+        if message.guild is None or not isinstance(message.author, discord.Member):
             return
 
         # 1. 連線測試指令
