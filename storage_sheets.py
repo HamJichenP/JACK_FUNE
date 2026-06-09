@@ -6,6 +6,7 @@
 
 import os
 import gspread
+import aiohttp
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 
@@ -148,3 +149,61 @@ class StorageSheets:
         except Exception as e:
             print(f"[Storage][錯誤] 建立或共享試算表時發生異常: {e}")
             return ""
+
+    async def write_user_data_via_gas(self, gas_url: str, display_name: str, roles: list[str], registered_day: str) -> bool:
+        """
+        透過 GAS Web App 網址發送 POST 請求寫入資料。
+        
+        :param gas_url: 該伺服器所設定的 Google Apps Script 網頁應用程式網址
+        :param display_name: 使用者的顯示名稱 / 暱稱 (字串)
+        :param roles: 使用者目前擁有的身分組名稱清單
+        :param registered_day: 報名日期 ("星期六" 或 "星期日")
+        :return: 寫入成功返回 True，失敗則返回 False
+        """
+        # 防禦性檢查：防範輸入為空
+        if not gas_url:
+            print("[Storage][錯誤] 寫入失敗，未提供 GAS Web App 網址。")
+            return False
+        if not display_name:
+            print("[Storage][錯誤] 寫入失敗，使用者名字不可為空。")
+            return False
+
+        # 模擬模式
+        if self.mock_mode or gas_url == "MOCK_URL":
+            roles_str = ", ".join(roles) if roles else "無身分組"
+            print(f"[Storage][模擬寫入(GAS)] 成功發送資料 (網址: {gas_url}) -> "
+                  f"名字: {display_name}, 身分組: {roles_str}, 報名日期: {registered_day}")
+            return True
+
+        roles_str = ", ".join(roles) if roles else "無身分組"
+        payload = {
+            "name": display_name,
+            "roles": roles_str,
+            "day": registered_day
+        }
+
+        try:
+            # 使用 aiohttp 發送非同步 POST 請求
+            # 設定 10 秒連線超時，避免連線失敗時機器人長時間卡住
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(gas_url, json=payload) as response:
+                    if response.status == 200:
+                        # 解析 GAS 後台回傳的 JSON
+                        res_json = await response.json()
+                        if res_json.get("status") == "success":
+                            print(f"[Storage][GAS] 資料已成功傳送並寫入試算表 - 名字: {display_name}, 日期: {registered_day}")
+                            return True
+                        else:
+                            error_msg = res_json.get("message", "未知錯誤")
+                            print(f"[Storage][錯誤] GAS 執行寫入失敗: {error_msg}")
+                            return False
+                    else:
+                        print(f"[Storage][錯誤] 與 GAS 通訊失敗，伺服器回應狀態碼: {response.status}")
+                        return False
+        except aiohttp.ClientConnectorError as e:
+            print(f"[Storage][錯誤] 無法連線至 GAS Web App 網址。請確認網址是否正確，且網頁應用程式部署權限是否已設定為「任何人 (Anyone)」。錯誤資訊: {e}")
+            return False
+        except Exception as e:
+            print(f"[Storage][錯誤] 與 GAS 網址通訊時發生未知異常: {e}")
+            return False

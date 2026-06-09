@@ -33,9 +33,9 @@ class RegistrationView(discord.ui.View):
         config = self.bot.load_config()
         server_cfg = config.get(guild_id, {})
 
-        sheet_key = server_cfg.get("google_sheets_key")
-        if not sheet_key:
-            await interaction.response.send_message("❌ 此伺服器尚未設定 Google 試算表金鑰，無法進行報名。請聯絡管理員設定。", ephemeral=True)
+        gas_url = server_cfg.get("gas_web_app_url")
+        if not gas_url:
+            await interaction.response.send_message("❌ 此伺服器尚未設定 Google GAS Web App 網址，無法進行報名。請聯絡管理員使用 `!setup_gas` 進行設定。", ephemeral=True)
             return
 
         target_roles = server_cfg.get("target_roles", [])
@@ -46,14 +46,14 @@ class RegistrationView(discord.ui.View):
         else:
             roles = [role.name for role in member.roles if role.name != "@everyone"]
 
-        # 先延遲回應 (Defer)，避免寫入 Google Sheets API 時因為超過 3 秒而造成互動逾時錯誤
+        # 先延遲回應 (Defer)，避免網路傳輸超時
         await interaction.response.defer(ephemeral=True)
 
         print(f"[Bot] 偵測到按鈕互動報名：伺服器={guild.name}, 成員={member.display_name}, 日期={day}, 身分組={roles}")
 
-        # 呼叫寫入
-        success = self.bot.storage.write_user_data(
-            spreadsheet_key=sheet_key,
+        # 呼叫非同步寫入方法
+        success = await self.bot.storage.write_user_data_via_gas(
+            gas_url=gas_url,
             display_name=member.display_name,
             roles=roles,
             registered_day=day
@@ -71,10 +71,10 @@ class RegistrationView(discord.ui.View):
         else:
             await interaction.followup.send(
                 "❌ **報名失敗！**\n"
-                "寫入 Google 試算表時發生錯誤，請聯絡伺服器管理員確認：\n"
-                "1. 試算表金鑰是否正確\n"
-                "2. 試算表是否已共享給機器人服務帳戶的 Email\n"
-                "3. Google Sheets API 與 Google Drive API 是否已在 Cloud Console 啟用",
+                "無法連線或寫入 Google 試算表，請聯絡伺服器管理員確認：\n"
+                "1. Google GAS 網址設定是否正確\n"
+                "2. 該 GAS 網頁應用程式是否已部署，且存取權限設定為「任何人 (Anyone)」\n"
+                "3. 本機網路是否能正常連線至外部 API",
                 ephemeral=True
             )
 
@@ -209,7 +209,7 @@ class DiscordBot(discord.Client):
             server_cfg = config.get(guild_id, {})
             
             sheet_key = server_cfg.get("google_sheets_key", "尚未設定")
-            template_key = server_cfg.get("template_sheets_key", "尚未設定")
+            gas_url = server_cfg.get("gas_web_app_url", "尚未設定")
             target_roles = server_cfg.get("target_roles", [])
             roles_display = ", ".join(target_roles) if target_roles else "記錄所有身分組 (排除 @everyone)"
             
@@ -217,10 +217,10 @@ class DiscordBot(discord.Client):
                 title=f"📊 {message.guild.name} 機器人設定狀態",
                 color=discord.Color.blue()
             )
-            embed.add_field(name="Google 試算表金鑰", value=f"`{sheet_key}`", inline=False)
-            embed.add_field(name="設定的模板金鑰", value=f"`{template_key}`", inline=False)
+            embed.add_field(name="Google GAS Web App 網址", value=f"`{gas_url}`", inline=False)
+            embed.add_field(name="Google 試算表金鑰 (舊/備用)", value=f"`{sheet_key}`", inline=False)
             embed.add_field(name="篩選身分組白名單", value=roles_display, inline=False)
-            embed.set_footer(text="提示：使用 !setup_sheet、!setup_template、!setup_roles 與 !create_sheet 進行設定")
+            embed.set_footer(text="提示：使用 !setup_gas 與 !setup_roles 進行修改")
             
             await message.channel.send(embed=embed)
             return
@@ -246,6 +246,35 @@ class DiscordBot(discord.Client):
                 await message.delete()
             except Exception as e:
                 print(f"[Bot][警告] 無法刪除管理員設定指令訊息: {e}")
+            return
+
+        # 8. 設定 GAS Web App 網址指令 (!setup_gas <GAS網址>)
+        if message.content.startswith("!setup_gas"):
+            if not message.author.guild_permissions.administrator:
+                await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                return
+
+            parts = message.content.split(maxsplit=1)
+            guild_id = str(message.guild.id)
+            config = self.load_config()
+            if guild_id not in config:
+                config[guild_id] = {}
+
+            if len(parts) < 2 or parts[1].strip().lower() == "none":
+                config[guild_id]["gas_web_app_url"] = ""
+                self.save_config(config)
+                await message.channel.send("✅ 已清除此伺服器的 Google GAS 網址設定。")
+                print(f"[Bot][設定] 伺服器 {message.guild.name} (ID: {guild_id}) 已清除 GAS 網址。")
+            else:
+                gas_url = parts[1].strip()
+                if not (gas_url.startswith("http://") or gas_url.startswith("https://")):
+                    await message.channel.send("❌ 用法錯誤！請提供以 `http://` 或 `https://` 開頭的有效 GAS 網址。")
+                    return
+                
+                config[guild_id]["gas_web_app_url"] = gas_url
+                self.save_config(config)
+                await message.channel.send(f"✅ 已成功設定此伺服器的 Google GAS Web App 網址！\n網址：`{gas_url}`")
+                print(f"[Bot][設定] 伺服器 {message.guild.name} (ID: {guild_id}) 已設定 GAS 網址：{gas_url}")
             return
 
         # 6. 設定模板試算表金鑰指令 (!setup_template <Key>)
@@ -352,10 +381,12 @@ class DiscordBot(discord.Client):
         config = self.load_config()
         server_cfg = config.get(guild_id, {})
 
+        gas_url = server_cfg.get("gas_web_app_url")
         sheet_key = server_cfg.get("google_sheets_key")
-        if not sheet_key:
-            # 該伺服器尚未設定試算表金鑰，不執行寫入動作
-            print(f"[Bot][忽略] 偵測到表情符號互動，但伺服器 (ID: {guild_id}) 尚未設定 Google 試算表金鑰！")
+        
+        if not gas_url and not sheet_key:
+            # 兩者皆未設定，無法寫入
+            print(f"[Bot][忽略] 偵測到表情符號互動，但伺服器 (ID: {guild_id}) 尚未設定 GAS 網址或試算表金鑰！")
             return
 
         target_roles = server_cfg.get("target_roles", [])
@@ -387,10 +418,18 @@ class DiscordBot(discord.Client):
         print(f" - 名字: {member.display_name}")
         print(f" - 身分組: {roles}")
 
-        # 4. 呼叫儲存模組寫入資料 (動態帶入此伺服器的 sheet_key)
-        self.storage.write_user_data(
-            spreadsheet_key=sheet_key,
-            display_name=member.display_name,
-            roles=roles,
-            registered_day="反應報名"
-        )
+        # 4. 優先使用 GAS 非同步寫入，若未設定則回退至原生試算表寫入
+        if gas_url:
+            await self.storage.write_user_data_via_gas(
+                gas_url=gas_url,
+                display_name=member.display_name,
+                roles=roles,
+                registered_day="反應報名"
+            )
+        elif sheet_key:
+            self.storage.write_user_data(
+                spreadsheet_key=sheet_key,
+                display_name=member.display_name,
+                roles=roles,
+                registered_day="反應報名"
+            )
