@@ -251,14 +251,62 @@ class H5ExtractorView(discord.ui.View):
         # 組合專屬的登入跳轉連結
         login_url = f"{api_url}/m/2025h5sjgj/tw/?user_id={interaction.user.id}&channel_id={interaction.channel_id}"
 
+        # 生成書籤小工具單行 JavaScript 程式碼
+        bookmarklet_js = (
+            "javascript:(function(){"
+            "const hash=window.location.hash;"
+            "let token=null;"
+            "if(hash){"
+            "const params=new URLSearchParams(hash.substring(1));"
+            "const tokenB64=params.get('redirect_token');"
+            "if(tokenB64){"
+            "try{"
+            "const decoded=atob(tokenB64.replace(/-/g,'+').replace(/_/g,'/'));"
+            "const data=JSON.parse(decoded);"
+            "token=data.access_token||data.token;"
+            "}catch(e){}"
+            "}"
+            "}"
+            "if(!token){"
+            "const keys=['token','access_token','accessToken','sdk_token','mpay_token','authorization','login_token','mpay_sdk_token'];"
+            "for(let k of keys){"
+            "let v=localStorage.getItem(k)||sessionStorage.getItem(k);"
+            "if(v){token=v;break;}"
+            "}"
+            "}"
+            "if(!token){alert('❌ 找不到登入 Token，請確認您已在此網頁登入角色。');return;}"
+            f"fetch('{api_url}/api/h5_token',{{"
+            "method:'POST',"
+            "headers:{{'Content-Type':'application/json'}},"
+            f"body:JSON.stringify({{token:token,channel_id:'{interaction.channel_id}',user_id:'{interaction.user.id}'}})"
+            "}).then(res=>{"
+            "if(res.ok){alert('✅ 心法數據同步成功！此網頁現在可以關閉了。');}"
+            "else{alert('❌ 同步失敗，請聯絡管理員確認機器人狀態。');}"
+            "}).catch(err=>{alert('❌ 連線錯誤: '+err.message);});"
+            "})();"
+        )
+
         embed = discord.Embed(
             title="📊 一鍵自動查詢角色心法",
-            description="本功能已完美實現**一鍵自動擷取**！\n"
-                        "請點擊下方按鈕開啟官方登入網頁，完成登入後您的武學配置卡片即會自動同步至本頻道中！\n\n"
-                        "💡 **使用說明**：\n"
-                        "1. 點擊下方連結按鈕。\n"
-                        "2. 在彈出的網頁中正常進行登入（可使用手機號碼驗證碼）。\n"
-                        "3. 登入成功後網頁會顯示「查詢成功」，您的配置卡片將立即發送至 Discord 頻道！",
+            description=(
+                "本功能支援多種同步方式，請選擇最適合您的方法：\n\n"
+                "### 📱 方法一：手機驗證碼 / 網易帳密登入（最方便）\n"
+                "1. 點擊下方連結按鈕開啟登入網頁。\n"
+                "2. 正常輸入手機號碼與驗證碼登入。\n"
+                "3. **登入成功後即會自動同步**，此時可直接關閉網頁！\n\n"
+                "---\n"
+                "### 🔑 方法二：Google / Apple / Steam 等第三方登入\n"
+                "若您希望使用第三方帳號登入，由於登入後會被重定向回官方域名，請配合 **書籤小工具** 手動同步：\n\n"
+                "**1. 安裝書籤小工具（僅需設定一次）：**\n"
+                "- 在瀏覽器中任意新增一個網頁為書籤（例如按 `Ctrl+D` 或點擊星星圖示）。\n"
+                "- 編輯該書籤的設定，將**「名稱」**修改為：`燕雲數據同步`。\n"
+                "- 將**「網址」**或**「URL」**欄位中的內容全部刪除，並貼上以下整行代碼：\n"
+                f"```javascript\n{bookmarklet_js}\n```\n"
+                "**2. 使用書籤同步：**\n"
+                "- 點擊下方按鈕，在網頁中點選您的第三方登入方式並完成登入。\n"
+                "- 當網頁跳轉回官方數據工具頁面後，**點擊瀏覽器書籤列的「燕雲數據同步」書籤**。\n"
+                "- 看到提示「心法數據同步成功」後，即可關閉網頁！"
+            ),
             color=discord.Color.blue()
         )
         view = H5ExtractorLinkView(login_url)
@@ -628,24 +676,12 @@ class DiscordBot(discord.Client):
                     html_content = html_content.replace('https://who.nie.easebar.com', '/proxy_who')
                     html_content = html_content.replace('https://sdk-os.mpsdk.easebar.com', '/proxy_sdk')
                     
-                    # 智慧注入提示橫幅，提醒使用者不要使用第三方 OAuth 登入
+                    # 智慧注入提示橫幅，提醒使用者可以使用第三方 OAuth 登入，但需配合書籤小工具
                     banner_html = """
-                    <div style="background:#e74c3c;color:#fff;text-align:center;padding:12px;font-family:sans-serif;font-size:14px;position:relative;z-index:999999;font-weight:bold;box-shadow:0 2px 5px rgba(0,0,0,0.2);line-height:1.5;">
-                      ⚠️ 注意事項：請使用「手機驗證碼」或「網易帳號密碼」進行登入。<br>
-                      <span style="font-size:12px;font-weight:normal;opacity:0.9;">（本工具為本機代理環境，不支援 Google/Apple/Steam 等第三方授權跳轉登入）</span>
+                    <div style="background:#2c3e50;color:#fff;text-align:center;padding:12px;font-family:sans-serif;font-size:14px;position:relative;z-index:999999;font-weight:bold;box-shadow:0 2px 5px rgba(0,0,0,0.2);line-height:1.5;">
+                      💡 提示：本機代理優先支援手機驗證碼登入（可全自動同步）。<br>
+                      <span style="font-size:12px;font-weight:normal;opacity:0.9;">若使用 Google/Apple/Steam 等第三方登入，跳轉至官網後請點擊瀏覽器「書籤小工具」完成同步。</span>
                     </div>
-                    <style>
-                      /* 強制隱藏會導致跨域跳轉失敗的第三方登入按鈕與區塊 */
-                      img[src*="btn_google"], img[src*="btn_apple"], 
-                      img[src*="btn_steam"], img[src*="btn_epic"], 
-                      img[src*="btn_twitter"], img[src*="btn_psn"] {
-                          display: none !important;
-                      }
-                      /* 隱藏第三方登入的標題或圖示容器，只留下手機與帳密輸入框 */
-                      .third-login, .other-login, [class*="third"], [class*="other"] {
-                          display: none !important;
-                      }
-                    </style>
                     """
                     if '<body>' in html_content:
                         html_content = html_content.replace('<body>', f'<body>{banner_html}')
