@@ -594,10 +594,25 @@ class DiscordBot(discord.Client):
                     body = await resp.read()
                     
                     html_content = body.decode('utf-8', errors='ignore')
-                    # 將所有指向官方域名的絕對路徑改為相對路徑，徹底解決 CORS 阻擋載入資源的問題
                     html_content = html_content.replace('https://www.wherewindsmeetgame.com', '')
                     html_content = html_content.replace('https://who.nie.easebar.com', '/proxy_who')
                     html_content = html_content.replace('https://sdk-os.mpsdk.easebar.com', '/proxy_sdk')
+                    
+                    # 智慧注入提示橫幅，提醒使用者不要使用第三方 OAuth 登入
+                    banner_html = """
+                    <div style="background:#e74c3c;color:#fff;text-align:center;padding:12px;font-family:sans-serif;font-size:14px;position:relative;z-index:999999;font-weight:bold;box-shadow:0 2px 5px rgba(0,0,0,0.2);line-height:1.5;">
+                      ⚠️ 注意事項：請使用「手機驗證碼」或「網易帳號密碼」進行登入。<br>
+                      <span style="font-size:12px;font-weight:normal;opacity:0.9;">（本工具為本機代理環境，不支援 Google/Apple/Steam 等第三方授權跳轉登入）</span>
+                    </div>
+                    """
+                    if '<body>' in html_content:
+                        html_content = html_content.replace('<body>', f'<body>{banner_html}')
+                    elif '<body' in html_content:
+                        parts = html_content.split('<body', 1)
+                        if len(parts) == 2:
+                            body_rest = parts[1].split('>', 1)
+                            if len(body_rest) == 2:
+                                html_content = f"{parts[0]}<body{body_rest[0]}>{banner_html}{body_rest[1]}"
                     
                     inject_js = f"""
                     <script>
