@@ -6,11 +6,173 @@
 import os
 import json
 import asyncio
+import aiohttp
 import discord
 from storage_sheets import StorageSheets
 
 CONFIG_FILE = "server_config.json"
 TEMPLATE_COPY_URL = "https://docs.google.com/spreadsheets/d/1hRvW70XsD4d3WBlaaHQ8JytAHNDWRKL8r54tdHca4Bk/copy"
+
+# 繁體中文翻譯對照表 (用於 H5 數據解析)
+TRANSLATION_MAP = {
+    "kongfus": {
+        10101: "積矩九劍",
+        10102: "無名劍法",
+        10201: "九曲驚神槍",
+        10301: "明川藥典",
+        10302: "青山執筆",
+        10202: "無名槍法",
+        20501: "泥犁三垢",
+        20401: "嗟夫刀法",
+        20103: "八方風雷槍",
+        20601: "九重春色",
+        20701: "粟子遊塵",
+        20602: "千香引魂蠱",
+        20603: "醉夢遊春",
+        20702: "粟子行雲",
+        20801: "斬雪刀法",
+        20402: "十方破陣"
+    },
+    "xinfas": {
+        1: "生龍活虎",
+        2: "晚雪間",
+        3: "鐵身訣",
+        4: "山月無影",
+        5: "極樂泣血",
+        41: "征人歸",
+        42: "所恨年年",
+        43: "歸燕經",
+        44: "怒斬馬",
+        45: "長生無相",
+        46: "婆娑影",
+        81: "易水歌",
+        82: "四時無常",
+        101: "千山法",
+        102: "燎原星火",
+        103: "威猛歌",
+        104: "無名心法",
+        151: "逐狼心經",
+        152: "移經易武",
+        153: "凝神章",
+        154: "劍氣縱横",
+        301: "葫蘆飛飛",
+        302: "春雷篇",
+        303: "縱地摘星",
+        304: "花上月令",
+        351: "君臣藥",
+        352: "杏花不見",
+        353: "指玄篇註",
+        354: "千絲蠱",
+        401: "山河絕韻",
+        402: "困獸心經",
+        403: "抗造大法",
+        404: "磐石訣",
+        451: "忘川絕響",
+        452: "心彌泥魚",
+        453: "斷石之構",
+        454: "滄浪劍訣",
+        501: "千營一呼",
+        502: "繩舟行木",
+        503: "燈兒亮",
+        504: "大唐歌",
+        6: "沙擺尾",
+        48: "丹心篆",
+        47: "明晦同塵",
+        551: "霜天白夜",
+        552: "孤忠不辭",
+        553: "穿喉訣",
+        554: "燎原踏"
+    }
+}
+
+class H5ExtractorModal(discord.ui.Modal, title="燕雲十六聲數據查詢"):
+    token_input = discord.ui.TextInput(
+        label="請輸入您的 H5 登入 Token (access_token)",
+        placeholder="請貼上 access_token 憑證...",
+        required=True,
+        max_length=200,
+        style=discord.TextStyle.short
+    )
+
+    def __init__(self, bot: 'DiscordBot'):
+        super().__init__()
+        self.bot = bot
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # 延遲回應，並設定為公開訊息 (ephemeral=False)，且之後不會自動刪除
+        await interaction.response.defer(ephemeral=False)
+        token = self.token_input.value.strip()
+
+        api_url = "https://s2.easebar.com/78ae9d90792a3e9b/role/roleInfo"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://www.wherewindsmeetgame.com",
+            "Referer": "https://www.wherewindsmeetgame.com/m/2025h5sjgj/tw/",
+            "access_token": token
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 401:
+                        await interaction.followup.send("❌ **查詢失敗**：認證 Token 已失效或過期，請重新取得。")
+                        return
+                    resp.raise_for_status()
+                    data = await resp.json()
+
+            # 取得主要資料節點
+            role_data = data.get("data", {}) if "data" in data else data
+            if not role_data:
+                await interaction.followup.send("❌ **查詢失敗**：未獲取到有效的角色數據。")
+                return
+
+            role_name = role_data.get('roleName', '未知')
+            kongfu_main_id = role_data.get("kongfuMain")
+            kongfu_sub_id = role_data.get("kongfuSub")
+            passive_slots = role_data.get("passiveSlots", [])
+
+            # 翻譯主流派與副流派
+            kongfu_main = TRANSLATION_MAP["kongfus"].get(kongfu_main_id, f"未知流派 ({kongfu_main_id})")
+            kongfu_sub = TRANSLATION_MAP["kongfus"].get(kongfu_sub_id, f"未知流派 ({kongfu_sub_id})")
+
+            # 翻譯被動心法
+            parsed_xinfas = []
+            for x_id in passive_slots:
+                if x_id == 0 or x_id is None:
+                    continue
+                xf_name = TRANSLATION_MAP["xinfas"].get(x_id, f"未知心法 ({x_id})")
+                parsed_xinfas.append(xf_name)
+
+            xinfas_str = ", ".join(parsed_xinfas) if parsed_xinfas else "無"
+
+            embed = discord.Embed(
+                title="📊 【燕雲十六聲】官方數據擷取結果",
+                color=discord.Color.dark_teal()
+            )
+            embed.add_field(name="👤 角色名稱", value=f"`{role_name}`", inline=False)
+            embed.add_field(name="⚔️ 主流派 (主心法)", value=f"`{kongfu_main}`", inline=True)
+            embed.add_field(name="🛡️ 副流派 (副心法)", value=f"`{kongfu_sub}`", inline=True)
+            embed.add_field(name="🏷️ 裝備被動心法", value=f"`{xinfas_str}`", inline=False)
+            embed.set_footer(text="數據來源：燕雲十六聲官方 H5 數據工具")
+
+            # 發送結果
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            print(f"[Bot][錯誤] 擷取 H5 資料時出錯: {e}")
+            await interaction.followup.send("❌ **查詢失敗**：連接官方 API 時發生異常，請確認 Token 是否正確。")
+
+
+class H5ExtractorView(discord.ui.View):
+    def __init__(self, bot: 'DiscordBot'):
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    @discord.ui.button(label="🔍 查詢角色心法", style=discord.ButtonStyle.primary, custom_id="btn_h5_extractor", emoji="📊")
+    async def extract_data(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # 點擊按鈕彈出 Modal 視窗讓玩家填寫 Token
+        await interaction.response.send_modal(H5ExtractorModal(self.bot))
 
 class RoleSelect(discord.ui.Select):
     def __init__(self, bot: 'DiscordBot', day: str, gas_url: str, roles: list[str]):
@@ -58,13 +220,15 @@ class RoleSelect(discord.ui.Select):
                 f"📅 報名日期：`{self.day}`\n"
                 f"👤 登記名稱：`{member.display_name if isinstance(member, discord.Member) else member.name}`\n"
                 f"🏷️ 選擇武學：`{selected_role}`",
-                ephemeral=False
+                ephemeral=False,
+                wait=True
             )
         else:
             msg = await interaction.followup.send(
                 "❌ **報名失敗！**\n"
                 "無法連線或寫入 Google 試算表，請聯絡伺服器管理員確認 GAS 網址設定與權限是否正確。",
-                ephemeral=False
+                ephemeral=False,
+                wait=True
             )
         
         # 嘗試清除最初的「處理中」隱密提示訊息
@@ -254,6 +418,7 @@ class DiscordBot(discord.Client):
         
         # 註冊 Persistent View 讓舊按鈕在機器人重啟後依然有效
         self.add_view(RegistrationView(self))
+        self.add_view(H5ExtractorView(self))
         print("[Bot] 已成功註冊持久化按鈕視圖 (Persistent View)")
         print("--------------------------------------------------")
 
@@ -515,6 +680,34 @@ class DiscordBot(discord.Client):
                 await message.delete()
             except Exception as e:
                 print(f"[Bot][警告] 無法刪除管理員說明指令訊息: {e}")
+            return
+
+        # 10. 部署 H5 數據擷取按鈕指令 (!setup_extractor)
+        if message.content.lower() == "!setup_extractor":
+            if not message.author.guild_permissions.administrator:
+                msg = await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                await msg.delete(delay=2.0)
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
+                return
+
+            embed = discord.Embed(
+                title="🔍 燕雲十六聲 - 角色與心法配置查詢",
+                description="點擊下方按鈕並貼上您的 **H5 登入 Token**，機器人會立即在頻道中展示您的武學配置！\n\n"
+                            "💡 **如何取得 Token？**\n"
+                            "您可以執行本地的 `h5_data_extractor.py` 數據擷取工具，手動登入成功後，"
+                            "該工具將會自動在控制台輸出您的認證 Token。複製該 Token 並貼入此處即可！\n\n"
+                            "*備註：查詢結果將公開展示，且**不會**自動刪除，方便大家互相交流配置。*",
+                color=discord.Color.blue()
+            )
+            view = H5ExtractorView(self)
+            await message.channel.send(embed=embed, view=view)
+            try:
+                await message.delete()
+            except Exception as e:
+                print(f"[Bot][警告] 無法刪除管理員 H5 設定指令訊息: {e}")
             return
 
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
