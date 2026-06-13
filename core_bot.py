@@ -50,6 +50,7 @@ class RoleSelect(discord.ui.Select):
             registered_day=self.day
         )
         
+        msg = None
         if success:
             # 發送公開的成功報名訊息，以利 2 秒後機器人能將其完全刪除以維持版面乾淨
             msg = await interaction.followup.send(
@@ -77,10 +78,11 @@ class RoleSelect(discord.ui.Select):
 
         # 延遲 2 秒後刪除公開的通知訊息
         await asyncio.sleep(2.0)
-        try:
-            await msg.delete()
-        except Exception as e:
-            print(f"[Bot][警告] 無法刪除公開的報名結果訊息: {e}")
+        if msg:
+            try:
+                await msg.delete()
+            except Exception as e:
+                print(f"[Bot][警告] 無法刪除公開的報名結果訊息: {e}")
 
 
 
