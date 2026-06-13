@@ -648,13 +648,36 @@ class DiscordBot(discord.Client):
                     <script>
                       (function() {{
                         console.log("✦ 燕雲十六聲數據擷取監聽已啟動 ✦");
-                        const checkInterval = setInterval(function() {{
-                          const keys = ['token', 'access_token', 'accessToken', 'sdk_token', 'mpay_token', 'authorization', 'login_token', 'mpay_sdk_token'];
-                          let token = null;
-                          for (let k of keys) {{
-                            let v = localStorage.getItem(k) || sessionStorage.getItem(k);
-                            if (v) {{ token = v; break; }}
+                        
+                        // 嘗試從 URL Hash 中直接解析 Base64 登入憑證 (適用於 Google 等第三方登入成功跳轉)
+                        function getTokenFromHash() {{
+                          try {{
+                            const hash = window.location.hash;
+                            if (!hash) return null;
+                            const params = new URLSearchParams(hash.substring(1));
+                            const tokenB64 = params.get('redirect_token');
+                            if (!tokenB64) return null;
+                            
+                            // 解碼 URL-Safe Base64 字串
+                            const decoded = atob(tokenB64.replace(/-/g, '+').replace(/_/g, '/'));
+                            const data = JSON.parse(decoded);
+                            return data.access_token || data.token || null;
+                          }} catch(e) {{
+                            console.error("[DEBUG] 解析 Hash Token 出錯:", e);
+                            return null;
                           }}
+                        }}
+
+                        const checkInterval = setInterval(function() {{
+                          let token = getTokenFromHash();
+                          if (!token) {{
+                            const keys = ['token', 'access_token', 'accessToken', 'sdk_token', 'mpay_token', 'authorization', 'login_token', 'mpay_sdk_token'];
+                            for (let k of keys) {{
+                              let v = localStorage.getItem(k) || sessionStorage.getItem(k);
+                              if (v) {{ token = v; break; }}
+                            }}
+                          }}
+                          
                           if (token) {{
                             clearInterval(checkInterval);
                             console.log("✨ 成功擷取到 Token！正在回傳給機器人...");
