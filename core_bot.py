@@ -368,6 +368,8 @@ class DiscordBot(discord.Client):
         self.web_app = aiohttp.web.Application()
         self.web_app.router.add_route('*', '/api/h5_token', self.handle_web_token)
         self.web_app.router.add_get('/m/2025h5sjgj/tw/', self.handle_auth_login)
+        self.web_app.router.add_route('*', '/proxy_who/{path:.*}', self.handle_proxy_who)
+        self.web_app.router.add_route('*', '/proxy_sdk/{path:.*}', self.handle_proxy_sdk)
         self.web_app.router.add_route('*', '/{path:.*}', self.handle_proxy)
         self.web_runner = None
         self.web_site = None
@@ -509,6 +511,8 @@ class DiscordBot(discord.Client):
                     html_content = body.decode('utf-8', errors='ignore')
                     # 將所有指向官方域名的絕對路徑改為相對路徑，徹底解決 CORS 阻擋載入資源的問題
                     html_content = html_content.replace('https://www.wherewindsmeetgame.com', '')
+                    html_content = html_content.replace('https://who.nie.easebar.com', '/proxy_who')
+                    html_content = html_content.replace('https://sdk-os.mpsdk.easebar.com', '/proxy_sdk')
                     
                     inject_js = f"""
                     <script>
@@ -558,6 +562,100 @@ class DiscordBot(discord.Client):
             print(f"[Bot][錯誤] 獲取官方 HTML 失敗: {e}")
             return aiohttp.web.Response(text=f"❌ 無法連線至官方伺服器，請稍後再試。原因: {e}", status=500)
 
+    async def handle_proxy_who(self, request: aiohttp.web.Request) -> aiohttp.web.StreamResponse:
+        """代理 who.nie.easebar.com 請求，繞過 CORS 跨域政策限制"""
+        if request.method == "OPTIONS":
+            response = aiohttp.web.Response()
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+            return response
+
+        path = request.match_info.get('path', '')
+        target_url = f"https://who.nie.easebar.com/{path}"
+        if request.query_string:
+            target_url += f"?{request.query_string}"
+
+        # 重寫與過濾 headers，模擬來自官方網域的合法請求
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'content-length', 'origin', 'referer']}
+        headers['Origin'] = 'https://www.wherewindsmeetgame.com'
+        headers['Referer'] = 'https://www.wherewindsmeetgame.com/'
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                req_data = await request.read() if request.has_body else None
+                async with session.request(
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    data=req_data,
+                    allow_redirects=False
+                ) as resp:
+                    body = await resp.read()
+                    
+                    content_type = resp.headers.get('Content-Type', '').lower()
+                    if 'javascript' in content_type or 'html' in content_type or 'json' in content_type or 'css' in content_type:
+                        body = body.replace(b'https://who.nie.easebar.com', b'/proxy_who')
+                        body = body.replace(b'https://sdk-os.mpsdk.easebar.com', b'/proxy_sdk')
+                        body = body.replace(b'https://www.wherewindsmeetgame.com', b'')
+
+                    print(f"[Bot][ProxyWho] {request.method} /{path} -> Status {resp.status}")
+                    
+                    res_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'transfer-encoding', 'content-length']}
+                    res_headers['Access-Control-Allow-Origin'] = '*'
+                    
+                    return aiohttp.web.Response(body=body, status=resp.status, headers=res_headers)
+        except Exception as e:
+            print(f"[Bot][ProxyWhoError] 代理 who 資源 {path} 時出錯: {e}")
+            return aiohttp.web.Response(status=502)
+
+    async def handle_proxy_sdk(self, request: aiohttp.web.Request) -> aiohttp.web.StreamResponse:
+        """代理 sdk-os.mpsdk.easebar.com 請求，繞過 CORS 跨域政策限制"""
+        if request.method == "OPTIONS":
+            response = aiohttp.web.Response()
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+            response.headers["Access-Control-Allow-Headers"] = "*"
+            return response
+
+        path = request.match_info.get('path', '')
+        target_url = f"https://sdk-os.mpsdk.easebar.com/{path}"
+        if request.query_string:
+            target_url += f"?{request.query_string}"
+
+        # 重寫與過濾 headers，模擬來自官方網域的合法請求
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'content-length', 'origin', 'referer']}
+        headers['Origin'] = 'https://www.wherewindsmeetgame.com'
+        headers['Referer'] = 'https://www.wherewindsmeetgame.com/'
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                req_data = await request.read() if request.has_body else None
+                async with session.request(
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    data=req_data,
+                    allow_redirects=False
+                ) as resp:
+                    body = await resp.read()
+                    
+                    content_type = resp.headers.get('Content-Type', '').lower()
+                    if 'javascript' in content_type or 'html' in content_type or 'json' in content_type or 'css' in content_type:
+                        body = body.replace(b'https://who.nie.easebar.com', b'/proxy_who')
+                        body = body.replace(b'https://sdk-os.mpsdk.easebar.com', b'/proxy_sdk')
+                        body = body.replace(b'https://www.wherewindsmeetgame.com', b'')
+
+                    print(f"[Bot][ProxySDK] {request.method} /{path} -> Status {resp.status}")
+                    
+                    res_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'transfer-encoding', 'content-length']}
+                    res_headers['Access-Control-Allow-Origin'] = '*'
+                    
+                    return aiohttp.web.Response(body=body, status=resp.status, headers=res_headers)
+        except Exception as e:
+            print(f"[Bot][ProxySDKError] 代理 sdk 資源 {path} 時出錯: {e}")
+            return aiohttp.web.Response(status=502)
+
     async def handle_proxy(self, request: aiohttp.web.Request) -> aiohttp.web.StreamResponse:
         """萬用代理，將所有靜態資源與 API 轉發給官方網站"""
         path = request.match_info.get('path', '')
@@ -585,6 +683,8 @@ class DiscordBot(discord.Client):
                     content_type = resp.headers.get('Content-Type', '').lower()
                     if 'javascript' in content_type or 'html' in content_type or 'json' in content_type or 'css' in content_type:
                         body = body.replace(b'https://www.wherewindsmeetgame.com', b'')
+                        body = body.replace(b'https://who.nie.easebar.com', b'/proxy_who')
+                        body = body.replace(b'https://sdk-os.mpsdk.easebar.com', b'/proxy_sdk')
                     
                     # 輸出代理連線狀態，有助於分析 404 等問題
                     print(f"[Bot][Proxy] {request.method} /{path} -> Status {resp.status}")
