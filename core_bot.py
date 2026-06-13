@@ -7,6 +7,7 @@ import os
 import json
 import asyncio
 import aiohttp
+import aiohttp.web
 import discord
 from storage_sheets import StorageSheets
 
@@ -103,65 +104,10 @@ class H5ExtractorModal(discord.ui.Modal, title="燕雲十六聲數據查詢"):
         await interaction.response.defer(ephemeral=False)
         token = self.token_input.value.strip()
 
-        api_url = "https://s2.easebar.com/78ae9d90792a3e9b/role/roleInfo"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-            "Accept": "application/json, text/plain, */*",
-            "Origin": "https://www.wherewindsmeetgame.com",
-            "Referer": "https://www.wherewindsmeetgame.com/m/2025h5sjgj/tw/",
-            "access_token": token
-        }
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status == 401:
-                        await interaction.followup.send("❌ **查詢失敗**：認證 Token 已失效或過期，請重新取得。")
-                        return
-                    resp.raise_for_status()
-                    data = await resp.json()
-
-            # 取得主要資料節點
-            role_data = data.get("data", {}) if "data" in data else data
-            if not role_data:
-                await interaction.followup.send("❌ **查詢失敗**：未獲取到有效的角色數據。")
-                return
-
-            role_name = role_data.get('roleName', '未知')
-            kongfu_main_id = role_data.get("kongfuMain")
-            kongfu_sub_id = role_data.get("kongfuSub")
-            passive_slots = role_data.get("passiveSlots", [])
-
-            # 翻譯主流派與副流派
-            kongfu_main = TRANSLATION_MAP["kongfus"].get(kongfu_main_id, f"未知流派 ({kongfu_main_id})")
-            kongfu_sub = TRANSLATION_MAP["kongfus"].get(kongfu_sub_id, f"未知流派 ({kongfu_sub_id})")
-
-            # 翻譯被動心法
-            parsed_xinfas = []
-            for x_id in passive_slots:
-                if x_id == 0 or x_id is None:
-                    continue
-                xf_name = TRANSLATION_MAP["xinfas"].get(x_id, f"未知心法 ({x_id})")
-                parsed_xinfas.append(xf_name)
-
-            xinfas_str = ", ".join(parsed_xinfas) if parsed_xinfas else "無"
-
-            embed = discord.Embed(
-                title="📊 【燕雲十六聲】官方數據擷取結果",
-                color=discord.Color.dark_teal()
-            )
-            embed.add_field(name="👤 角色名稱", value=f"`{role_name}`", inline=False)
-            embed.add_field(name="⚔️ 主流派 (主心法)", value=f"`{kongfu_main}`", inline=True)
-            embed.add_field(name="🛡️ 副流派 (副心法)", value=f"`{kongfu_sub}`", inline=True)
-            embed.add_field(name="🏷️ 裝備被動心法", value=f"`{xinfas_str}`", inline=False)
-            embed.set_footer(text="數據來源：燕雲十六聲官方 H5 數據工具")
-
-            # 發送結果
-            await interaction.followup.send(embed=embed)
-
-        except Exception as e:
-            print(f"[Bot][錯誤] 擷取 H5 資料時出錯: {e}")
-            await interaction.followup.send("❌ **查詢失敗**：連接官方 API 時發生異常，請確認 Token 是否正確。")
+        if interaction.channel and isinstance(interaction.channel, discord.TextChannel):
+            await self.bot.query_and_send_h5(token, interaction.channel, str(interaction.user.id))
+        else:
+            await interaction.followup.send("❌ 此查詢僅限於伺服器的文字頻道中執行。")
 
 
 class H5ExtractorView(discord.ui.View):
@@ -171,8 +117,56 @@ class H5ExtractorView(discord.ui.View):
 
     @discord.ui.button(label="🔍 查詢角色心法", style=discord.ButtonStyle.primary, custom_id="btn_h5_extractor", emoji="📊")
     async def extract_data(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 點擊按鈕彈出 Modal 視窗讓玩家填寫 Token
-        await interaction.response.send_modal(H5ExtractorModal(self.bot))
+        guild_id = str(interaction.guild.id) if interaction.guild else "global"
+        config = self.bot.load_config()
+        server_cfg = config.get(guild_id, {})
+        
+        # 讀取設定的 API URL，若未設定則嘗試使用本地預設 IP 的 port
+        api_url = server_cfg.get("bot_api_url", "")
+        if not api_url:
+            port = config.get("global", {}).get("web_port", 8826)
+            api_url = f"http://127.0.0.1:{port}"
+
+        # 組合 javascript bookmarklet
+        js_code = (
+            f"javascript:(function(){{"
+            f"const keys=['token','access_token','accessToken','sdk_token','mpay_token','authorization','login_token','mpay_sdk_token'];"
+            f"let t=null;for(let k of keys){{let v=localStorage.getItem(k)||sessionStorage.getItem(k);if(v){{t=v;break;}}}}"
+            f"if(!t){{alert('❌ 找不到登入憑證，請先登入官方網頁！');return;}}"
+            f"alert('⏳ 偵測到 Token，正在傳送至 Discord 機器人，請稍候...');"
+            f"fetch('{api_url}/api/h5_token',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
+            f"body:JSON.stringify({{token:t,channel_id:'{interaction.channel_id}',user_id:'{interaction.user.id}'}})}})"
+            f".then(r=>r.ok?alert('✅ 成功擷取！您的角色配置即將發送至 Discord 頻道！'):alert('❌ 傳送失敗，請聯絡管理員確認伺服器狀態。'))"
+            f".catch(e=>alert('❌ 連線錯誤: '+e.message));"
+            f"}})();"
+        )
+
+        embed = discord.Embed(
+            title="✦ 一分鐘自動查詢心法設定指南 ✦",
+            description="本系統採用 **方案 B（書籤小工具）**。您**完全不需要安裝任何軟體**，只要設定一次瀏覽器書籤，登入後點擊即可自動查詢並顯示在頻道中！",
+            color=discord.Color.blue()
+        )
+        embed.add_field(
+            name="1️⃣ 建立瀏覽器書籤（僅需設定一次）",
+            value="在您的電腦瀏覽器（Chrome / Edge 等）新增一個書籤，命名為 `✦ 燕雲心法擷取`，然後把下面這段 Javascript 代碼複製，並**貼入書籤的「網址 (URL)」欄位**中保存：",
+            inline=False
+        )
+        embed.add_field(
+            name="📋 複製以下代碼並填入書籤網址",
+            value=f"```javascript\n{js_code}\n```",
+            inline=False
+        )
+        embed.add_field(
+            name="2️⃣ 登入並點擊書籤",
+            value="1. 點擊下方連結開啟官方 H5 網頁並正常登入您的帳號：\n"
+                  "👉 **[燕雲十六聲官方 H5 數據網頁](https://www.wherewindsmeetgame.com/m/2025h5sjgj/tw/)**\n"
+                  "2. 登入成功（畫面顯示出您的角色資訊）後，**直接在該頁面點擊您剛才儲存的 `✦ 燕雲心法擷取` 書籤**。\n"
+                  "3. 點選確定後，您的配置卡片將會**自動發送至本頻道**！",
+            inline=False
+        )
+        embed.set_footer(text="提示：這是一則專屬於您的說明訊息，其他人看不到，請放心複製。")
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class RoleSelect(discord.ui.Select):
     def __init__(self, bot: 'DiscordBot', day: str, gas_url: str, roles: list[str]):
@@ -389,6 +383,12 @@ class DiscordBot(discord.Client):
         super().__init__(intents=intents)
         self.storage = storage_client
 
+        # 初始化 Web API 服務
+        self.web_app = aiohttp.web.Application()
+        self.web_app.router.add_route('*', '/api/h5_token', self.handle_web_token)
+        self.web_runner = None
+        self.web_site = None
+
     # --- 設定檔讀寫輔助方法 ---
     def load_config(self) -> dict:
         """載入伺服器設定檔"""
@@ -420,7 +420,153 @@ class DiscordBot(discord.Client):
         self.add_view(RegistrationView(self))
         self.add_view(H5ExtractorView(self))
         print("[Bot] 已成功註冊持久化按鈕視圖 (Persistent View)")
+
+        # 啟動 Web 服務
+        try:
+            self.web_runner = aiohttp.web.AppRunner(self.web_app)
+            await self.web_runner.setup()
+            
+            config = self.load_config()
+            port = config.get("global", {}).get("web_port", 8826)
+            
+            self.web_site = aiohttp.web.TCPSite(self.web_runner, '0.0.0.0', port)
+            await self.web_site.start()
+            print(f"[Bot] Web API 伺服器已啟動，監聽 port: {port}")
+        except Exception as e:
+            print(f"[Bot][錯誤] 無法啟動 Web API 伺服器: {e}")
+            
         print("--------------------------------------------------")
+
+    async def close(self):
+        """關閉機器人並清理非同步資源"""
+        if self.web_site:
+            try:
+                await self.web_site.stop()
+                print("[Bot] Web API 伺服器已停止")
+            except Exception:
+                pass
+        if self.web_runner:
+            try:
+                await self.web_runner.cleanup()
+            except Exception:
+                pass
+        await super().close()
+
+    async def handle_web_token(self, request: aiohttp.web.Request) -> aiohttp.web.Response:
+        """處理 Web API `/api/h5_token` 的跨網域 POST 請求"""
+        # 處理 CORS 預檢請求 (Preflight)
+        if request.method == "OPTIONS":
+            response = aiohttp.web.Response()
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+            return response
+
+        try:
+            data = await request.json()
+            token = data.get("token")
+            channel_id_str = data.get("channel_id")
+            user_id_str = data.get("user_id")
+
+            if not token or not channel_id_str:
+                return aiohttp.web.json_response(
+                    {"error": "Missing parameters"}, 
+                    status=400, 
+                    headers={"Access-Control-Allow-Origin": "*"}
+                )
+
+            channel_id = int(channel_id_str)
+            channel = self.get_channel(channel_id)
+            if not channel:
+                try:
+                    channel = await self.fetch_channel(channel_id)
+                except Exception:
+                    channel = None
+
+            if not channel or not isinstance(channel, discord.TextChannel):
+                return aiohttp.web.json_response(
+                    {"error": "Channel not found or invalid type"}, 
+                    status=404, 
+                    headers={"Access-Control-Allow-Origin": "*"}
+                )
+
+            # 使用 asyncio.create_task 在背景執行 API 擷取並發送訊息，避免阻塞 Web 回應
+            asyncio.create_task(self.query_and_send_h5(token, channel, user_id_str))
+
+            return aiohttp.web.json_response(
+                {"status": "success"}, 
+                headers={"Access-Control-Allow-Origin": "*"}
+            )
+
+        except Exception as e:
+            print(f"[Bot][WebAPI] 處理 Token 請求時出錯: {e}")
+            return aiohttp.web.json_response(
+                {"error": str(e)}, 
+                status=500, 
+                headers={"Access-Control-Allow-Origin": "*"}
+            )
+
+    async def query_and_send_h5(self, token: str, channel: discord.TextChannel, user_id_str: str | None = None):
+        """核心 H5 API 查詢與資料發送"""
+        api_url = "https://s2.easebar.com/78ae9d90792a3e9b/role/roleInfo"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://www.wherewindsmeetgame.com",
+            "Referer": "https://www.wherewindsmeetgame.com/m/2025h5sjgj/tw/",
+            "access_token": token
+        }
+
+        user_mention = f"<@{user_id_str}> " if user_id_str else ""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 401:
+                        await channel.send(f"{user_mention}❌ **查詢失敗**：認證 Token 已失效或過期，請重新取得。")
+                        return
+                    resp.raise_for_status()
+                    data = await resp.json()
+
+            # 取得主要資料節點
+            role_data = data.get("data", {}) if "data" in data else data
+            if not role_data:
+                await channel.send(f"{user_mention}❌ **查詢失敗**：未獲取到有效的角色數據。")
+                return
+
+            role_name = role_data.get('roleName', '未知')
+            kongfu_main_id = role_data.get("kongfuMain")
+            kongfu_sub_id = role_data.get("kongfuSub")
+            passive_slots = role_data.get("passiveSlots", [])
+
+            # 翻譯主流派與副流派
+            kongfu_main = TRANSLATION_MAP["kongfus"].get(kongfu_main_id, f"未知流派 ({kongfu_main_id})")
+            kongfu_sub = TRANSLATION_MAP["kongfus"].get(kongfu_sub_id, f"未知流派 ({kongfu_sub_id})")
+
+            # 翻譯被動心法
+            parsed_xinfas = []
+            for x_id in passive_slots:
+                if x_id == 0 or x_id is None:
+                    continue
+                xf_name = TRANSLATION_MAP["xinfas"].get(x_id, f"未知心法 ({x_id})")
+                parsed_xinfas.append(xf_name)
+
+            xinfas_str = ", ".join(parsed_xinfas) if parsed_xinfas else "無"
+
+            embed = discord.Embed(
+                title="📊 【燕雲十六聲】官方數據擷取結果",
+                color=discord.Color.dark_teal()
+            )
+            embed.add_field(name="👤 角色名稱", value=f"`{role_name}`", inline=False)
+            embed.add_field(name="⚔️ 主流派 (主心法)", value=f"`{kongfu_main}`", inline=True)
+            embed.add_field(name="🛡️ 副流派 (副心法)", value=f"`{kongfu_sub}`", inline=True)
+            embed.add_field(name="🏷️ 裝備被動心法", value=f"`{xinfas_str}`", inline=False)
+            embed.set_footer(text="數據來源：燕雲十六聲官方 H5 數據工具")
+
+            await channel.send(content=f"{user_mention}的武學數據查詢成功！", embed=embed)
+
+        except Exception as e:
+            print(f"[Bot][錯誤] 擷取 H5 資料時出錯: {e}")
+            await channel.send(f"{user_mention}❌ **查詢失敗**：連接官方 API 時發生異常，請確認 Token 是否正確。")
 
     async def on_message(self, message: discord.Message):
         """當伺服器中有新訊息發送時觸發 (處理設定指令與連線測試)"""
@@ -532,6 +678,7 @@ class DiscordBot(discord.Client):
             
             sheet_key = server_cfg.get("google_sheets_key", "尚未設定")
             gas_url = server_cfg.get("gas_web_app_url", "尚未設定")
+            api_url = server_cfg.get("bot_api_url", "尚未設定")
             target_roles = server_cfg.get("target_roles", [])
             roles_display = ", ".join(target_roles) if target_roles else "記錄所有身分組 (排除 @everyone)"
             
@@ -541,8 +688,9 @@ class DiscordBot(discord.Client):
             )
             embed.add_field(name="Google GAS Web App 網址", value=f"`{gas_url}`", inline=False)
             embed.add_field(name="Google 試算表金鑰 (舊/備用)", value=f"`{sheet_key}`", inline=False)
+            embed.add_field(name="機器人 Web API 網址", value=f"`{api_url}`", inline=False)
             embed.add_field(name="篩選身分組白名單", value=roles_display, inline=False)
-            embed.set_footer(text="提示：使用 !setup_gas 與 !setup_roles 進行修改")
+            embed.set_footer(text="提示：使用 !setup_gas, !setup_api_url 與 !setup_roles 進行修改")
             
             await message.channel.send(embed=embed)
             try:
@@ -695,11 +843,12 @@ class DiscordBot(discord.Client):
 
             embed = discord.Embed(
                 title="🔍 燕雲十六聲 - 角色與心法配置查詢",
-                description="點擊下方按鈕並貼上您的 **H5 登入 Token**，機器人會立即在頻道中展示您的武學配置！\n\n"
-                            "💡 **如何取得 Token？**\n"
-                            "您可以執行本地的 `h5_data_extractor.py` 數據擷取工具，手動登入成功後，"
-                            "該工具將會自動在控制台輸出您的認證 Token。複製該 Token 並貼入此處即可！\n\n"
-                            "*備註：查詢結果將公開展示，且**不會**自動刪除，方便大家互相交流配置。*",
+                description="點擊下方按鈕，系統會為您生成專屬的 **書籤小工具** 與詳細教學。\n"
+                            "在瀏覽器中登入官方 H5 數據工具後，只需**點選該書籤**即可自動查詢並將您的武學配置卡片發送至本頻道中！\n\n"
+                            "💡 **特點**：\n"
+                            "* **完全免下載/免安裝任何軟體**。\n"
+                            "* 一分鐘快速設定，手機或電腦均可使用。\n"
+                            "* 查詢結果公開展示，且**不會**自動刪除，方便大家互相交流配置。",
                 color=discord.Color.blue()
             )
             view = H5ExtractorView(self)
@@ -708,6 +857,53 @@ class DiscordBot(discord.Client):
                 await message.delete()
             except Exception as e:
                 print(f"[Bot][警告] 無法刪除管理員 H5 設定指令訊息: {e}")
+            return
+
+        # 11. 設定機器人 API 外部網址指令 (!setup_api_url <URL>)
+        if message.content.startswith("!setup_api_url"):
+            if not message.author.guild_permissions.administrator:
+                msg = await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                await msg.delete(delay=2.0)
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
+                return
+
+            parts = message.content.split(maxsplit=1)
+            guild_id = str(message.guild.id)
+            config = self.load_config()
+            if guild_id not in config:
+                config[guild_id] = {}
+
+            if len(parts) < 2 or parts[1].strip().lower() == "none":
+                config[guild_id]["bot_api_url"] = ""
+                self.save_config(config)
+                msg = await message.channel.send("✅ 已清除此伺服器的機器人 API 網址設定。")
+                await msg.delete(delay=2.0)
+                print(f"[Bot][設定] 伺服器 {message.guild.name} (ID: {guild_id}) 已清除 API 網址。")
+            else:
+                api_url = parts[1].strip().rstrip('/')
+                if not (api_url.startswith("http://") or api_url.startswith("https://")):
+                    msg = await message.channel.send("❌ 用法錯誤！請提供以 `http://` 或 `https://` 開頭的有效網址。")
+                    await msg.delete(delay=2.0)
+                    try:
+                        await message.delete()
+                    except Exception:
+                        pass
+                    return
+
+                config[guild_id]["bot_api_url"] = api_url
+                self.save_config(config)
+                msg = await message.channel.send(f"✅ 已成功設定此伺服器的機器人 API 網址！\n網址：`{api_url}`")
+                await msg.delete(delay=2.0)
+                print(f"[Bot][設定] 伺服器 {message.guild.name} (ID: {guild_id}) 已設定 API 網址：{api_url}")
+
+            # 自動刪除管理員指令
+            try:
+                await message.delete()
+            except Exception as e:
+                print(f"[Bot][警告] 無法刪除指令訊息: {e}")
             return
 
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
