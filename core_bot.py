@@ -110,6 +110,12 @@ class H5ExtractorModal(discord.ui.Modal, title="燕雲十六聲數據查詢"):
             await interaction.followup.send("❌ 此查詢僅限於伺服器的文字頻道中執行。")
 
 
+class H5ExtractorLinkView(discord.ui.View):
+    def __init__(self, url: str):
+        super().__init__(timeout=60)
+        self.add_item(discord.ui.Button(label="🔗 點我登入官方數據工具", url=url, style=discord.ButtonStyle.link))
+
+
 class H5ExtractorView(discord.ui.View):
     def __init__(self, bot: 'DiscordBot'):
         super().__init__(timeout=None)
@@ -127,46 +133,21 @@ class H5ExtractorView(discord.ui.View):
             port = config.get("global", {}).get("web_port", 8826)
             api_url = f"http://127.0.0.1:{port}"
 
-        # 組合 javascript bookmarklet
-        js_code = (
-            f"javascript:(function(){{"
-            f"const keys=['token','access_token','accessToken','sdk_token','mpay_token','authorization','login_token','mpay_sdk_token'];"
-            f"let t=null;for(let k of keys){{let v=localStorage.getItem(k)||sessionStorage.getItem(k);if(v){{t=v;break;}}}}"
-            f"if(!t){{alert('❌ 找不到登入憑證，請先登入官方網頁！');return;}}"
-            f"alert('⏳ 偵測到 Token，正在傳送至 Discord 機器人，請稍候...');"
-            f"fetch('{api_url}/api/h5_token',{{method:'POST',headers:{{'Content-Type':'application/json'}},"
-            f"body:JSON.stringify({{token:t,channel_id:'{interaction.channel_id}',user_id:'{interaction.user.id}'}})}})"
-            f".then(r=>r.ok?alert('✅ 成功擷取！您的角色配置即將發送至 Discord 頻道！'):alert('❌ 傳送失敗，請聯絡管理員確認伺服器狀態。'))"
-            f".catch(e=>alert('❌ 連線錯誤: '+e.message));"
-            f"}})();"
-        )
+        # 組合專屬的登入跳轉連結
+        login_url = f"{api_url}/auth_login?user_id={interaction.user.id}&channel_id={interaction.channel_id}"
 
         embed = discord.Embed(
-            title="✦ 一分鐘自動查詢心法設定指南 ✦",
-            description="本系統採用 **方案 B（書籤小工具）**。您**完全不需要安裝任何軟體**，只要設定一次瀏覽器書籤，登入後點擊即可自動查詢並顯示在頻道中！",
+            title="📊 一鍵自動查詢角色心法",
+            description="本功能已完美實現**一鍵自動擷取**！\n"
+                        "請點擊下方按鈕開啟官方登入網頁，完成登入後您的武學配置卡片即會自動同步至本頻道中！\n\n"
+                        "💡 **使用說明**：\n"
+                        "1. 點擊下方連結按鈕。\n"
+                        "2. 在彈出的網頁中正常進行登入（可使用手機號碼驗證碼）。\n"
+                        "3. 登入成功後網頁會顯示「查詢成功」，您的配置卡片將立即發送至 Discord 頻道！",
             color=discord.Color.blue()
         )
-        embed.add_field(
-            name="1️⃣ 建立瀏覽器書籤（僅需設定一次）",
-            value="在您的電腦瀏覽器（Chrome / Edge 等）新增一個書籤，命名為 `✦ 燕雲心法擷取`，然後把下面這段 Javascript 代碼複製，並**貼入書籤的「網址 (URL)」欄位**中保存：",
-            inline=False
-        )
-        embed.add_field(
-            name="📋 複製以下代碼並填入書籤網址",
-            value=f"```javascript\n{js_code}\n```",
-            inline=False
-        )
-        embed.add_field(
-            name="2️⃣ 登入並點擊書籤",
-            value="1. 點擊下方連結開啟官方 H5 網頁並正常登入您的帳號：\n"
-                  "👉 **[燕雲十六聲官方 H5 數據網頁](https://www.wherewindsmeetgame.com/m/2025h5sjgj/tw/)**\n"
-                  "2. 登入成功（畫面顯示出您的角色資訊）後，**直接在該頁面點擊您剛才儲存的 `✦ 燕雲心法擷取` 書籤**。\n"
-                  "3. 點選確定後，您的配置卡片將會**自動發送至本頻道**！",
-            inline=False
-        )
-        embed.set_footer(text="提示：這是一則專屬於您的說明訊息，其他人看不到，請放心複製。")
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        view = H5ExtractorLinkView(login_url)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 class RoleSelect(discord.ui.Select):
     def __init__(self, bot: 'DiscordBot', day: str, gas_url: str, roles: list[str]):
@@ -386,6 +367,8 @@ class DiscordBot(discord.Client):
         # 初始化 Web API 服務
         self.web_app = aiohttp.web.Application()
         self.web_app.router.add_route('*', '/api/h5_token', self.handle_web_token)
+        self.web_app.router.add_get('/auth_login', self.handle_auth_login)
+        self.web_app.router.add_route('*', '/{path:.*}', self.handle_proxy)
         self.web_runner = None
         self.web_site = None
 
@@ -505,6 +488,104 @@ class DiscordBot(discord.Client):
                 status=500, 
                 headers={"Access-Control-Allow-Origin": "*"}
             )
+
+    async def handle_auth_login(self, request: aiohttp.web.Request) -> aiohttp.web.Response:
+        """使用者點擊 Discord 連結後的進入點，代理官方 HTML 並注入監聽腳本"""
+        user_id = request.query.get('user_id', '')
+        channel_id = request.query.get('channel_id', '')
+        
+        target_url = "https://www.wherewindsmeetgame.com/m/2025h5sjgj/tw/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+            "Referer": "https://www.wherewindsmeetgame.com/"
+        }
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(target_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    resp.raise_for_status()
+                    body = await resp.read()
+                    
+                    html_content = body.decode('utf-8', errors='ignore')
+                    
+                    inject_js = f"""
+                    <script>
+                      (function() {{
+                        console.log("✦ 燕雲十六聲數據擷取監聽已啟動 ✦");
+                        const checkInterval = setInterval(function() {{
+                          const keys = ['token', 'access_token', 'accessToken', 'sdk_token', 'mpay_token', 'authorization', 'login_token', 'mpay_sdk_token'];
+                          let token = null;
+                          for (let k of keys) {{
+                            let v = localStorage.getItem(k) || sessionStorage.getItem(k);
+                            if (v) {{ token = v; break; }}
+                          }}
+                          if (token) {{
+                            clearInterval(checkInterval);
+                            console.log("✨ 成功擷取到 Token！正在回傳給機器人...");
+                            fetch('/api/h5_token', {{
+                              method: 'POST',
+                              headers: {{ 'Content-Type': 'application/json' }},
+                              body: JSON.stringify({{
+                                token: token,
+                                channel_id: '{channel_id}',
+                                user_id: '{user_id}'
+                              }})
+                            }})
+                            .then(res => {{
+                              if (res.ok) {{
+                                document.body.innerHTML = '<div style="text-align:center;margin-top:200px;font-family:sans-serif;"><div style="font-size:50px;">✅</div><div style="font-size:24px;color:#2ecc71;margin-top:20px;font-weight:bold;">查詢成功！</div><div style="font-size:16px;color:#7f8c8d;margin-top:10px;">您的武學配置卡片已發送至 Discord 頻道。<br>此視窗現在可以關閉了。</div></div>';
+                              }} else {{
+                                alert("❌ 資料傳送失敗，請聯絡管理員確認機器人服務狀態。");
+                              }}
+                            }})
+                            .catch(err => {{
+                              alert("❌ 連線錯誤: " + err.message);
+                            }});
+                          }}
+                        }}, 1000);
+                      }})();
+                    </script>
+                    """
+                    if '</body>' in html_content:
+                        html_content = html_content.replace('</body>', f'{inject_js}</body>')
+                    else:
+                        html_content += inject_js
+                        
+                    return aiohttp.web.Response(text=html_content, content_type='text/html', charset='utf-8')
+        except Exception as e:
+            print(f"[Bot][錯誤] 獲取官方 HTML 失敗: {e}")
+            return aiohttp.web.Response(text=f"❌ 無法連線至官方伺服器，請稍後再試。原因: {e}", status=500)
+
+    async def handle_proxy(self, request: aiohttp.web.Request) -> aiohttp.web.StreamResponse:
+        """萬用代理，將所有靜態資源與 API 轉發給官方網站"""
+        path = request.match_info.get('path', '')
+        target_url = f"https://www.wherewindsmeetgame.com/{path}"
+        if request.query_string:
+            target_url += f"?{request.query_string}"
+
+        # 過濾 headers，避免 Host 衝突
+        headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'content-length']}
+        headers['Referer'] = 'https://www.wherewindsmeetgame.com/m/2025h5sjgj/tw/'
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                req_data = await request.read() if request.has_body else None
+                async with session.request(
+                    method=request.method,
+                    url=target_url,
+                    headers=headers,
+                    data=req_data,
+                    allow_redirects=False
+                ) as resp:
+                    body = await resp.read()
+                    
+                    res_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'transfer-encoding', 'content-length']}
+                    res_headers['Access-Control-Allow-Origin'] = '*'
+                    
+                    return aiohttp.web.Response(body=body, status=resp.status, headers=res_headers)
+        except Exception as e:
+            print(f"[Bot][ProxyError] 代理資源 {path} 時出錯: {e}")
+            return aiohttp.web.Response(status=502)
 
     async def query_and_send_h5(self, token: str, channel: discord.TextChannel, user_id_str: str | None = None):
         """核心 H5 API 查詢與資料發送"""
