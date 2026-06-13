@@ -5,6 +5,7 @@
 
 import os
 import json
+import asyncio
 import discord
 from storage_sheets import StorageSheets
 
@@ -38,8 +39,8 @@ class RoleSelect(discord.ui.Select):
         selected_role = self.values[0]
         member = interaction.user
         
-        # 延遲回應，因與 GAS 網址通訊會耗費時間，避免 Discord 連線逾時
-        await interaction.response.defer(ephemeral=True)
+        # 點選後立即將原下拉選單訊息更新為處理中狀態並清除選單元件，防止重複點擊並維持畫面清爽
+        await interaction.response.edit_message(content="⏳ 正在處理報名資料，請稍候...", view=None)
         
         # 呼叫非同步寫入方法，將選定的單一身分組寫入試算表
         success = await self.bot.storage.write_user_data_via_gas(
@@ -50,19 +51,37 @@ class RoleSelect(discord.ui.Select):
         )
         
         if success:
-            await interaction.followup.send(
+            # 發送公開的成功報名訊息，以利 2 秒後機器人能將其完全刪除以維持版面乾淨
+            msg = await interaction.followup.send(
                 f"✅ **報名成功！**\n"
                 f"📅 報名日期：`{self.day}`\n"
                 f"👤 登記名稱：`{member.display_name if isinstance(member, discord.Member) else member.name}`\n"
                 f"🏷️ 選擇武學：`{selected_role}`",
-                ephemeral=True
+                ephemeral=False
             )
         else:
-            await interaction.followup.send(
+            msg = await interaction.followup.send(
                 "❌ **報名失敗！**\n"
                 "無法連線或寫入 Google 試算表，請聯絡伺服器管理員確認 GAS 網址設定與權限是否正確。",
-                ephemeral=True
+                ephemeral=False
             )
+        
+        # 嘗試清除最初的「處理中」隱密提示訊息
+        try:
+            await interaction.delete_original_response()
+        except Exception:
+            try:
+                await interaction.edit_original_response(content="✅ 登記程序已完成。")
+            except Exception:
+                pass
+
+        # 延遲 2 秒後刪除公開的通知訊息
+        await asyncio.sleep(2.0)
+        try:
+            await msg.delete()
+        except Exception as e:
+            print(f"[Bot][警告] 無法刪除公開的報名結果訊息: {e}")
+
 
 
 class RoleSelectionView(discord.ui.View):
@@ -99,7 +118,15 @@ class RegistrationView(discord.ui.View):
 
         gas_url = server_cfg.get("gas_web_app_url")
         if not gas_url:
-            await interaction.response.send_message("❌ 此伺服器尚未設定 Google GAS Web App 網址，無法進行報名。請聯絡管理員使用 `!setup_gas` 進行設定。", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ 此伺服器尚未設定 Google GAS Web App 網址，無法進行報名。請聯絡管理員使用 `!setup_gas` 進行設定。",
+                ephemeral=False
+            )
+            await asyncio.sleep(2.0)
+            try:
+                await interaction.delete_original_response()
+            except Exception as e:
+                print(f"[Bot][警告] 無法刪除設定錯誤提示: {e}")
             return
 
         target_roles = server_cfg.get("target_roles", [])
@@ -112,19 +139,25 @@ class RegistrationView(discord.ui.View):
 
         # 智慧過濾與選單分流邏輯
         if not roles:
-            # 情況 3：沒有任何符合白名單的身分組 -> 直接回覆失敗
+            # 情況 3：沒有任何符合白名單的身分組 -> 直接回覆失敗 (使用公開訊息)
             await interaction.response.send_message(
                 "❌ **報名失敗**\n"
                 "您目前在伺服器中沒有擁有任何符合登記要求的武學身分組。\n"
                 "*提示：請先向幹部申請對應的武學身分組。*",
-                ephemeral=True
+                ephemeral=False
             )
+            # 2 秒後自動刪除此回覆
+            await asyncio.sleep(2.0)
+            try:
+                await interaction.delete_original_response()
+            except Exception as e:
+                print(f"[Bot][警告] 無法刪除失敗提示訊息: {e}")
             return
 
         if len(roles) == 1:
             # 情況 1：只擁有一個符合身分組 -> 直接一鍵快速報名
-            # 先延遲回應 (Defer)，避免網路傳輸超時
-            await interaction.response.defer(ephemeral=True)
+            # 先延遲回應 (Defer) 為公開訊息，避免網路傳輸超時，以利 2 秒後刪除
+            await interaction.response.defer(ephemeral=False)
             
             success = await self.bot.storage.write_user_data_via_gas(
                 gas_url=gas_url,
@@ -134,22 +167,26 @@ class RegistrationView(discord.ui.View):
             )
             
             if success:
-                await interaction.followup.send(
-                    f"✅ **報名成功！**\n"
-                    f"📅 報名日期：`{day}`\n"
-                    f"👤 登記名稱：`{member.display_name}`\n"
-                    f"🏷️ 登記武學：`{roles[0]}`",
-                    ephemeral=True
+                await interaction.edit_original_response(
+                    content=f"✅ **報名成功！**\n"
+                            f"📅 報名日期：`{day}`\n"
+                            f"👤 登記名稱：`{member.display_name}`\n"
+                            f"🏷️ 登記武學：`{roles[0]}`"
                 )
             else:
-                await interaction.followup.send(
-                    "❌ **報名失敗！**\n"
-                    "無法連線或寫入 Google 試算表，請聯絡伺服器管理員確認：\n"
-                    "1. Google GAS 網址設定是否正確\n"
-                    "2. 該 GAS 網頁應用程式是否已部署，且存取權限設定為「任何人 (Anyone)」\n"
-                    "3. 本機網路是否能正常連線至外部 API",
-                    ephemeral=True
+                await interaction.edit_original_response(
+                    content="❌ **報名失敗！**\n"
+                            "無法連線或寫入 Google 試算表，請聯絡伺服器管理員確認：\n"
+                            "1. Google GAS 網址設定是否正確\n"
+                            "2. 該 GAS 網頁應用程式是否已部署，且存取權限設定為「任何人 (Anyone)」\n"
+                            "3. 本機網路是否能正常連線至外部 API"
                 )
+            # 2 秒後自動刪除報名結果訊息
+            await asyncio.sleep(2.0)
+            try:
+                await interaction.delete_original_response()
+            except Exception as e:
+                print(f"[Bot][警告] 無法刪除報名結果訊息: {e}")
         else:
             # 情況 2：擁有多個符合身分組 -> 彈出下拉選單讓使用者自行挑選一個
             view = RoleSelectionView(self.bot, day, gas_url, roles)
@@ -230,19 +267,34 @@ class DiscordBot(discord.Client):
 
         # 1. 連線測試指令
         if message.content.lower() == "!ping":
-            await message.channel.send("🏓 pong! 機器人運作正常！")
+            msg = await message.channel.send("🏓 pong! 機器人運作正常！")
+            await msg.delete(delay=2.0)
+            try:
+                await message.delete()
+            except Exception:
+                pass
             return
 
         # 2. 設定試算表金鑰指令 (!setup_sheet <Key>)
         if message.content.startswith("!setup_sheet"):
             # 權限檢查：限制只有管理員能執行
             if not message.author.guild_permissions.administrator:
-                await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                msg = await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                await msg.delete(delay=2.0)
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
                 return
 
             parts = message.content.split(maxsplit=1)
             if len(parts) < 2:
-                await message.channel.send("❌ 用法錯誤！請使用：`!setup_sheet <您的Google試算表Key>`")
+                msg = await message.channel.send("❌ 用法錯誤！請使用：`!setup_sheet <您的Google試算表Key>`")
+                await msg.delete(delay=2.0)
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
                 return
 
             sheet_key = parts[1].strip()
@@ -254,14 +306,27 @@ class DiscordBot(discord.Client):
             config[guild_id]["google_sheets_key"] = sheet_key
             self.save_config(config)
 
-            await message.channel.send(f"✅ 已成功設定此伺服器的 Google 試算表金鑰！\n金鑰：`{sheet_key}`")
+            msg = await message.channel.send(f"✅ 已成功設定此伺服器的 Google 試算表金鑰！\n金鑰：`{sheet_key}`")
+            # 2 秒後自動刪除機器人的提示訊息
+            await msg.delete(delay=2.0)
+            
+            # 自動刪除管理員打的指令訊息
+            try:
+                await message.delete()
+            except Exception as e:
+                print(f"[Bot][警告] 無法刪除指令訊息: {e}")
             print(f"[Bot][設定] 伺服器 {message.guild.name} (ID: {guild_id}) 已更新試算表金鑰。")
             return
 
         # 3. 設定篩選身分組指令 (!setup_roles <身分組1,身分組2,...>)
         if message.content.startswith("!setup_roles"):
             if not message.author.guild_permissions.administrator:
-                await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                msg = await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                await msg.delete(delay=2.0)
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
                 return
 
             parts = message.content.split(maxsplit=1)
@@ -274,14 +339,22 @@ class DiscordBot(discord.Client):
                 # 清除篩選身分組，代表擷取全部
                 config[guild_id]["target_roles"] = []
                 self.save_config(config)
-                await message.channel.send("✅ 已清除身分組篩選限制，未來將記錄成員所擁有的所有身分組（排除 @everyone）。")
+                msg = await message.channel.send("✅ 已清除身分組篩選限制，未來將記錄成員所擁有的所有身分組（排除 @everyone）。")
+                await msg.delete(delay=2.0)
                 print(f"[Bot][設定] 伺服器 {message.guild.name} (ID: {guild_id}) 已清除身分組篩選條件。")
             else:
                 roles = [r.strip() for r in parts[1].split(",") if r.strip()]
                 config[guild_id]["target_roles"] = roles
                 self.save_config(config)
-                await message.channel.send(f"✅ 已成功設定此伺服器的篩選身分組白名單：`{', '.join(roles)}`")
+                msg = await message.channel.send(f"✅ 已成功設定此伺服器的篩選身分組白名單：`{', '.join(roles)}`")
+                await msg.delete(delay=2.0)
                 print(f"[Bot][設定] 伺服器 {message.guild.name} (ID: {guild_id}) 設定篩選身分組：{roles}")
+            
+            # 自動刪除管理員的設定指令
+            try:
+                await message.delete()
+            except Exception as e:
+                print(f"[Bot][警告] 無法刪除指令訊息: {e}")
             return
 
         # 4. 顯示目前伺服器設定指令 (!setup_show)
@@ -305,12 +378,21 @@ class DiscordBot(discord.Client):
             embed.set_footer(text="提示：使用 !setup_gas 與 !setup_roles 進行修改")
             
             await message.channel.send(embed=embed)
+            try:
+                await message.delete()
+            except Exception:
+                pass
             return
 
         # 5. 部署報名按鈕指令 (!setup_buttons)
         if message.content.lower() == "!setup_buttons":
             if not message.author.guild_permissions.administrator:
-                await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                msg = await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                await msg.delete(delay=2.0)
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
                 return
 
             embed = discord.Embed(
@@ -319,7 +401,7 @@ class DiscordBot(discord.Client):
                             "系統會自動擷取您的**顯示名稱**與**身分組**寫入至 Google 試算表。\n\n"
                             "🔹 點選 **星期六 報名** 登記週六活動\n"
                             "🔸 點選 **星期日 報名** 登記週日活動\n\n"
-                            "*備註：此按鈕會以「隱密訊息 (Ephemeral)」回覆，不會洗版頻道。*",
+                            "*備註：報名結果將以即時訊息回覆，並於 2 秒後由機器人完全刪除以維持頻道整潔。*",
                 color=discord.Color.dark_teal()
             )
             view = RegistrationView(self)
@@ -333,7 +415,12 @@ class DiscordBot(discord.Client):
         # 8. 設定 GAS Web App 網址指令 (!setup_gas <GAS網址>)
         if message.content.startswith("!setup_gas"):
             if not message.author.guild_permissions.administrator:
-                await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                msg = await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                await msg.delete(delay=2.0)
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
                 return
 
             parts = message.content.split(maxsplit=1)
@@ -345,24 +432,42 @@ class DiscordBot(discord.Client):
             if len(parts) < 2 or parts[1].strip().lower() == "none":
                 config[guild_id]["gas_web_app_url"] = ""
                 self.save_config(config)
-                await message.channel.send("✅ 已清除此伺服器的 Google GAS 網址設定。")
+                msg = await message.channel.send("✅ 已清除此伺服器的 Google GAS 網址設定。")
+                await msg.delete(delay=2.0)
                 print(f"[Bot][設定] 伺服器 {message.guild.name} (ID: {guild_id}) 已清除 GAS 網址。")
             else:
                 gas_url = parts[1].strip()
                 if not (gas_url.startswith("http://") or gas_url.startswith("https://")):
-                    await message.channel.send("❌ 用法錯誤！請提供以 `http://` 或 `https://` 開頭的有效 GAS 網址。")
+                    msg = await message.channel.send("❌ 用法錯誤！請提供以 `http://` 或 `https://` 開頭的有效 GAS 網址。")
+                    await msg.delete(delay=2.0)
+                    try:
+                        await message.delete()
+                    except Exception:
+                        pass
                     return
                 
                 config[guild_id]["gas_web_app_url"] = gas_url
                 self.save_config(config)
-                await message.channel.send(f"✅ 已成功設定此伺服器的 Google GAS Web App 網址！\n網址：`{gas_url}`")
+                msg = await message.channel.send(f"✅ 已成功設定此伺服器的 Google GAS Web App 網址！\n網址：`{gas_url}`")
+                await msg.delete(delay=2.0)
                 print(f"[Bot][設定] 伺服器 {message.guild.name} (ID: {guild_id}) 已設定 GAS 網址：{gas_url}")
+            
+            # 自動刪除管理員指令
+            try:
+                await message.delete()
+            except Exception as e:
+                print(f"[Bot][警告] 無法刪除指令訊息: {e}")
             return
 
         # 9. 顯示架設與設定說明指令 (!setup_help)
         if message.content.lower() == "!setup_help":
             if not message.author.guild_permissions.administrator:
-                await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                msg = await message.channel.send("❌ 只有具備「管理員 (Administrator)」權限的成員才能使用此指令。")
+                await msg.delete(delay=2.0)
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
                 return
 
             embed = discord.Embed(
