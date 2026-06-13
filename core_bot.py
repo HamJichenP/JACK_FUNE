@@ -92,31 +92,60 @@ def rewrite_request_text(text: str, local_host: str) -> str:
     # 定義需要被替換的本地 host 清單
     hosts_to_replace = list(set([local_host, "127.0.0.1:8826", "localhost:8826"]))
     
+    # 官方的目標網域
+    target_www = "https://www.wherewindsmeetgame.com"
+    target_sdk = "https://sdk-os.mpsdk.easebar.com"
+    target_who = "https://who.nie.easebar.com"
+    
     for h in hosts_to_replace:
         if not h:
             continue
-        # 1. 替換未編碼的本地位址
-        text = text.replace(f"http://{h}", "https://www.wherewindsmeetgame.com")
-        text = text.replace(f"https://{h}", "https://www.wherewindsmeetgame.com")
         
-        # 2. 替換已編碼的本地位址 (指定 safe="" 確保斜線也被編碼)
-        # 大寫
-        encoded_local_http_upper = urllib.parse.quote(f"http://{h}", safe="")
-        encoded_local_https_upper = urllib.parse.quote(f"https://{h}", safe="")
-        encoded_target_upper = urllib.parse.quote("https://www.wherewindsmeetgame.com", safe="")
+        # === 1. 替換未編碼的完整網址 (先長後短) ===
+        # http
+        text = text.replace(f"http://{h}/proxy_sdk", target_sdk)
+        text = text.replace(f"http://{h}/proxy_who", target_who)
+        text = text.replace(f"http://{h}", target_www)
         
-        text = text.replace(encoded_local_http_upper, encoded_target_upper)
-        text = text.replace(encoded_local_https_upper, encoded_target_upper)
+        # https
+        text = text.replace(f"https://{h}/proxy_sdk", target_sdk)
+        text = text.replace(f"https://{h}/proxy_who", target_who)
+        text = text.replace(f"https://{h}", target_www)
         
-        # 小寫
-        text = text.replace(encoded_local_http_upper.lower(), encoded_target_upper.lower())
-        text = text.replace(encoded_local_https_upper.lower(), encoded_target_upper.lower())
+        # === 2. 替換已編碼的完整網址 (先長後短，指定 safe="") ===
+        # 取得各種組合的編碼值
+        enc_local_http = urllib.parse.quote(f"http://{h}", safe="")
+        enc_local_https = urllib.parse.quote(f"https://{h}", safe="")
+        
+        enc_local_http_sdk = urllib.parse.quote(f"http://{h}/proxy_sdk", safe="")
+        enc_local_https_sdk = urllib.parse.quote(f"https://{h}/proxy_sdk", safe="")
+        enc_local_http_who = urllib.parse.quote(f"http://{h}/proxy_who", safe="")
+        enc_local_https_who = urllib.parse.quote(f"https://{h}/proxy_who", safe="")
+        
+        enc_target_www = urllib.parse.quote(target_www, safe="")
+        enc_target_sdk = urllib.parse.quote(target_sdk, safe="")
+        enc_target_who = urllib.parse.quote(target_who, safe="")
+        
+        # 大寫替換
+        text = text.replace(enc_local_http_sdk, enc_target_sdk)
+        text = text.replace(enc_local_https_sdk, enc_target_sdk)
+        text = text.replace(enc_local_http_who, enc_target_who)
+        text = text.replace(enc_local_https_who, enc_target_who)
+        text = text.replace(enc_local_http, enc_target_www)
+        text = text.replace(enc_local_https, enc_target_www)
+        
+        # 小寫替換
+        text = text.replace(enc_local_http_sdk.lower(), enc_target_sdk.lower())
+        text = text.replace(enc_local_https_sdk.lower(), enc_target_sdk.lower())
+        text = text.replace(enc_local_http_who.lower(), enc_target_who.lower())
+        text = text.replace(enc_local_https_who.lower(), enc_target_who.lower())
+        text = text.replace(enc_local_http.lower(), enc_target_www.lower())
+        text = text.replace(enc_local_https.lower(), enc_target_www.lower())
     
-    # 3. 替換代理路徑，還原為官方相對路徑
+    # === 3. 替換獨立的代理相對路徑 ===
     text = text.replace("/proxy_sdk", "")
     text = text.replace("/proxy_who", "")
     
-    # URL 編碼形式的代理路徑替換 (safe="")
     encoded_proxy_sdk_upper = urllib.parse.quote("/proxy_sdk", safe="")
     encoded_proxy_who_upper = urllib.parse.quote("/proxy_who", safe="")
     text = text.replace(encoded_proxy_sdk_upper, "")
@@ -126,6 +155,7 @@ def rewrite_request_text(text: str, local_host: str) -> str:
     text = text.replace(encoded_proxy_who_upper.lower(), "")
     
     return text
+
 
 def rewrite_response_location(location_str: str, local_host: str) -> str:
     """將官方重定向網址改寫為我們本地的代理網址，使用戶留在代理環境中"""
