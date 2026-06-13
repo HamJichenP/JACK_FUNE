@@ -134,7 +134,7 @@ class H5ExtractorView(discord.ui.View):
             api_url = f"http://127.0.0.1:{port}"
 
         # 組合專屬的登入跳轉連結
-        login_url = f"{api_url}/auth_login?user_id={interaction.user.id}&channel_id={interaction.channel_id}"
+        login_url = f"{api_url}/m/2025h5sjgj/tw/?user_id={interaction.user.id}&channel_id={interaction.channel_id}"
 
         embed = discord.Embed(
             title="📊 一鍵自動查詢角色心法",
@@ -367,7 +367,7 @@ class DiscordBot(discord.Client):
         # 初始化 Web API 服務
         self.web_app = aiohttp.web.Application()
         self.web_app.router.add_route('*', '/api/h5_token', self.handle_web_token)
-        self.web_app.router.add_get('/auth_login', self.handle_auth_login)
+        self.web_app.router.add_get('/m/2025h5sjgj/tw/', self.handle_auth_login)
         self.web_app.router.add_route('*', '/{path:.*}', self.handle_proxy)
         self.web_runner = None
         self.web_site = None
@@ -580,6 +580,11 @@ class DiscordBot(discord.Client):
                     allow_redirects=False
                 ) as resp:
                     body = await resp.read()
+                    
+                    # 智慧重寫：如果官方回傳的是 JS、HTML、JSON 或 CSS，我們將其中的官方網域改為相對路徑，以防 JS 內部的動態載入觸發 CORS 跨域限制
+                    content_type = resp.headers.get('Content-Type', '').lower()
+                    if 'javascript' in content_type or 'html' in content_type or 'json' in content_type or 'css' in content_type:
+                        body = body.replace(b'https://www.wherewindsmeetgame.com', b'')
                     
                     # 輸出代理連線狀態，有助於分析 404 等問題
                     print(f"[Bot][Proxy] {request.method} /{path} -> Status {resp.status}")
