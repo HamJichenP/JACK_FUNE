@@ -507,6 +507,8 @@ class DiscordBot(discord.Client):
                     body = await resp.read()
                     
                     html_content = body.decode('utf-8', errors='ignore')
+                    # 將所有指向官方域名的絕對路徑改為相對路徑，徹底解決 CORS 阻擋載入資源的問題
+                    html_content = html_content.replace('https://www.wherewindsmeetgame.com', '')
                     
                     inject_js = f"""
                     <script>
