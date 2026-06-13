@@ -20,42 +20,32 @@ function doPost(e) {
   var lock = LockService.getScriptLock();
   try {
     // 最多等待 30 秒取得寫入許可
-    lock.waitLock(30000); 
-    
+    lock.waitLock(30000);
+
     // 解析 Discord 機器人發過來的 JSON 資料
     var params = JSON.parse(e.postData.contents);
     var name = params.name;
     var roles = params.roles;
     var day = params.day;
-    
+
     // 2. 取得目前活動的試算表
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getActiveSheet();
-    
-    // 3. 根據報名天數 (day) 進行局部向下推擠並寫入
-    if (day === "星期六") {
-      // 週六待編制區：局部推擠 A2:B2 以下的資料
-      var rangeSat = sheet.getRange("A2:B2");
-      rangeSat.insertCells(SpreadsheetApp.Dimension.ROWS); // 局部向下推擠
-      
-      // 寫入最新報名資料到 A2, B2
-      sheet.getRange(2, 1).setValue(name);  // A2 填入遊戲 ID (第 1 欄)
-      sheet.getRange(2, 2).setValue(roles); // B2 填入武學 (第 2 欄)
-      
-    } else {
-      // 週日待編制區（"星期日" 或 "反應報名"）：局部推擠 D2:E2 以下的資料
-      var rangeSun = sheet.getRange("D2:E2");
-      rangeSun.insertCells(SpreadsheetApp.Dimension.ROWS); // 局部向下推擠
-      
-      // 寫入最新報名資料到 D2, E2
-      sheet.getRange(2, 4).setValue(name);  // D2 填入遊戲 ID (第 4 欄)
-      sheet.getRange(2, 5).setValue(roles); // E2 填入武學 (第 5 欄)
-    }
-    
+
+    // 3. 在第 2 列上方插入一個乾淨的空白列
+    // （這會把原本的資料往下推，表頭維持在第 1 列，最新報名資料永遠在第 2 列）
+    sheet.insertRowBefore(2);
+
+    // 4. 將資料寫入新產生的第 2 列
+    // 欄位分別為：A欄: 名字, B欄: 身分組, C欄: 報名日期
+    sheet.getRange(2, 1).setValue(name);
+    sheet.getRange(2, 2).setValue(roles);
+    sheet.getRange(2, 3).setValue(day);
+
     // 回傳成功狀態 JSON 給機器人
     return ContentService.createTextOutput(JSON.stringify({ "status": "success" }))
       .setMimeType(ContentService.MimeType.JSON);
-      
+
   } catch (err) {
     // 發生異常時回傳錯誤訊息
     return ContentService.createTextOutput(JSON.stringify({ "status": "error", "message": err.message }))

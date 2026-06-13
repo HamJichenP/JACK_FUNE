@@ -8,7 +8,68 @@ import json
 import discord
 from storage_sheets import StorageSheets
 
-CONFIG_FILE = "server_config.json"
+class RoleSelect(discord.ui.Select):
+    def __init__(self, bot: 'DiscordBot', day: str, gas_url: str, roles: list[str]):
+        """
+        自訂下拉選單元件，用於讓有多重武學身分組的成員選擇其一報名。
+        """
+        self.bot = bot
+        self.day = day
+        self.gas_url = gas_url
+
+        # 建立選單選項 (最多 25 個，Discord API 限制)
+        options = [
+            discord.SelectOption(label=role_name, value=role_name, emoji="⚔️")
+            for role_name in roles[:25]
+        ]
+        
+        super().__init__(
+            placeholder="請選擇您此戰要使用的武學身分...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        # 取得使用者所選取的單一身分組
+        selected_role = self.values[0]
+        member = interaction.user
+        
+        # 延遲回應，因與 GAS 網址通訊會耗費時間，避免 Discord 連線逾時
+        await interaction.response.defer(ephemeral=True)
+        
+        # 呼叫非同步寫入方法，將選定的單一身分組寫入試算表
+        success = await self.bot.storage.write_user_data_via_gas(
+            gas_url=self.gas_url,
+            display_name=member.display_name if isinstance(member, discord.Member) else member.name,
+            roles=[selected_role],
+            registered_day=self.day
+        )
+        
+        if success:
+            await interaction.followup.send(
+                f"✅ **報名成功！**\n"
+                f"📅 報名日期：`{self.day}`\n"
+                f"👤 登記名稱：`{member.display_name if isinstance(member, discord.Member) else member.name}`\n"
+                f"🏷️ 選擇武學：`{selected_role}`",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                "❌ **報名失敗！**\n"
+                "無法連線或寫入 Google 試算表，請聯絡伺服器管理員確認 GAS 網址設定與權限是否正確。",
+                ephemeral=True
+            )
+
+
+class RoleSelectionView(discord.ui.View):
+    def __init__(self, bot: 'DiscordBot', day: str, gas_url: str, roles: list[str]):
+        """
+        自訂的下拉選單視圖，這裡的 timeout 設為 60 秒以自動回收，不需使用持久化 (Persistent)。
+        """
+        super().__init__(timeout=60)
+        self.add_item(RoleSelect(bot, day, gas_url, roles))
+
 
 class RegistrationView(discord.ui.View):
     def __init__(self, bot: 'DiscordBot'):
@@ -46,35 +107,53 @@ class RegistrationView(discord.ui.View):
         else:
             roles = [role.name for role in member.roles if role.name != "@everyone"]
 
-        # 先延遲回應 (Defer)，避免網路傳輸超時
-        await interaction.response.defer(ephemeral=True)
-
-        print(f"[Bot] 偵測到按鈕互動報名：伺服器={guild.name}, 成員={member.display_name}, 日期={day}, 身分組={roles}")
-
-        # 呼叫非同步寫入方法
-        success = await self.bot.storage.write_user_data_via_gas(
-            gas_url=gas_url,
-            display_name=member.display_name,
-            roles=roles,
-            registered_day=day
-        )
-
-        if success:
-            roles_display = ", ".join(roles) if roles else "無身分組"
-            await interaction.followup.send(
-                f"✅ **報名成功！**\n"
-                f"📅 報名日期：`{day}`\n"
-                f"👤 登記名稱：`{member.display_name}`\n"
-                f"🏷️ 登記身分組：`{roles_display}`",
+        # 智慧過濾與選單分流邏輯
+        if not roles:
+            # 情況 3：沒有任何符合白名單的身分組 -> 直接回覆失敗
+            await interaction.response.send_message(
+                "❌ **報名失敗**\n"
+                "您目前在伺服器中沒有擁有任何符合登記要求的武學身分組。\n"
+                "*提示：請先向幹部申請對應的武學身分組。*",
                 ephemeral=True
             )
+            return
+
+        if len(roles) == 1:
+            # 情況 1：只擁有一個符合身分組 -> 直接一鍵快速報名
+            # 先延遲回應 (Defer)，避免網路傳輸超時
+            await interaction.response.defer(ephemeral=True)
+            
+            success = await self.bot.storage.write_user_data_via_gas(
+                gas_url=gas_url,
+                display_name=member.display_name,
+                roles=roles,
+                registered_day=day
+            )
+            
+            if success:
+                await interaction.followup.send(
+                    f"✅ **報名成功！**\n"
+                    f"📅 報名日期：`{day}`\n"
+                    f"👤 登記名稱：`{member.display_name}`\n"
+                    f"🏷️ 登記武學：`{roles[0]}`",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    "❌ **報名失敗！**\n"
+                    "無法連線或寫入 Google 試算表，請聯絡伺服器管理員確認：\n"
+                    "1. Google GAS 網址設定是否正確\n"
+                    "2. 該 GAS 網頁應用程式是否已部署，且存取權限設定為「任何人 (Anyone)」\n"
+                    "3. 本機網路是否能正常連線至外部 API",
+                    ephemeral=True
+                )
         else:
-            await interaction.followup.send(
-                "❌ **報名失敗！**\n"
-                "無法連線或寫入 Google 試算表，請聯絡伺服器管理員確認：\n"
-                "1. Google GAS 網址設定是否正確\n"
-                "2. 該 GAS 網頁應用程式是否已部署，且存取權限設定為「任何人 (Anyone)」\n"
-                "3. 本機網路是否能正常連線至外部 API",
+            # 情況 2：擁有多個符合身分組 -> 彈出下拉選單讓使用者自行挑選一個
+            view = RoleSelectionView(self.bot, day, gas_url, roles)
+            await interaction.response.send_message(
+                "⚔️ **偵測到您擁有多個武學身分組**\n"
+                "請於下方選單選擇您此戰要使用的武學進行登記：",
+                view=view,
                 ephemeral=True
             )
 
