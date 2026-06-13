@@ -3,6 +3,7 @@
         "google_sheets_key": "14HnF61Y1CW2RSmwrMqNYV9zd11JMLg1LEzxe_fCSl-E",
         "target_roles": [
             "管理員"
-        ]
+        ],
+        "gas_web_app_url": "https://script.google.com/macros/s/AKfycbxQdojxOsWcQZwXQtaPqcpBsWT9Ki1N9gg13pSW3gBLMijSPNWFexUqyaLUTEiin_GcNA/exec"
     }
 }
