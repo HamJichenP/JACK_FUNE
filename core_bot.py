@@ -8,6 +8,8 @@ import json
 import discord
 from storage_sheets import StorageSheets
 
+CONFIG_FILE = "server_config.json"
+
 class RoleSelect(discord.ui.Select):
     def __init__(self, bot: 'DiscordBot', day: str, gas_url: str, roles: list[str]):
         """
