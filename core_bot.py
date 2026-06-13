@@ -89,26 +89,28 @@ TRANSLATION_MAP = {
 
 def rewrite_request_text(text: str, local_host: str) -> str:
     """將請求內容中的本地網址重寫回官方網域以通過安全驗證"""
-    # 1. 替換未編碼的本地位址
-    text = text.replace(f"http://{local_host}", "https://www.wherewindsmeetgame.com")
-    text = text.replace(f"https://{local_host}", "https://www.wherewindsmeetgame.com")
+    # 定義需要被替換的本地 host 清單
+    hosts_to_replace = list(set([local_host, "127.0.0.1:8826", "localhost:8826"]))
     
-    # 2. 替換已編碼的本地位址 (指定 safe="" 確保斜線也被編碼為 %2F)
-    # 處理大寫編碼
-    encoded_local_http_upper = urllib.parse.quote(f"http://{local_host}", safe="")
-    encoded_local_https_upper = urllib.parse.quote(f"https://{local_host}", safe="")
-    encoded_target_upper = urllib.parse.quote("https://www.wherewindsmeetgame.com", safe="")
-    
-    text = text.replace(encoded_local_http_upper, encoded_target_upper)
-    text = text.replace(encoded_local_https_upper, encoded_target_upper)
-    
-    # 處理小寫編碼 (以防萬一)
-    encoded_local_http_lower = encoded_local_http_upper.lower()
-    encoded_local_https_lower = encoded_local_https_upper.lower()
-    encoded_target_lower = encoded_target_upper.lower()
-    
-    text = text.replace(encoded_local_http_lower, encoded_target_lower)
-    text = text.replace(encoded_local_https_lower, encoded_target_lower)
+    for h in hosts_to_replace:
+        if not h:
+            continue
+        # 1. 替換未編碼的本地位址
+        text = text.replace(f"http://{h}", "https://www.wherewindsmeetgame.com")
+        text = text.replace(f"https://{h}", "https://www.wherewindsmeetgame.com")
+        
+        # 2. 替換已編碼的本地位址 (指定 safe="" 確保斜線也被編碼)
+        # 大寫
+        encoded_local_http_upper = urllib.parse.quote(f"http://{h}", safe="")
+        encoded_local_https_upper = urllib.parse.quote(f"https://{h}", safe="")
+        encoded_target_upper = urllib.parse.quote("https://www.wherewindsmeetgame.com", safe="")
+        
+        text = text.replace(encoded_local_http_upper, encoded_target_upper)
+        text = text.replace(encoded_local_https_upper, encoded_target_upper)
+        
+        # 小寫
+        text = text.replace(encoded_local_http_upper.lower(), encoded_target_upper.lower())
+        text = text.replace(encoded_local_https_upper.lower(), encoded_target_upper.lower())
     
     # 3. 替換代理路徑，還原為官方相對路徑
     text = text.replace("/proxy_sdk", "")
@@ -120,10 +122,8 @@ def rewrite_request_text(text: str, local_host: str) -> str:
     text = text.replace(encoded_proxy_sdk_upper, "")
     text = text.replace(encoded_proxy_who_upper, "")
     
-    encoded_proxy_sdk_lower = encoded_proxy_sdk_upper.lower()
-    encoded_proxy_who_lower = encoded_proxy_who_upper.lower()
-    text = text.replace(encoded_proxy_sdk_lower, "")
-    text = text.replace(encoded_proxy_who_lower, "")
+    text = text.replace(encoded_proxy_sdk_upper.lower(), "")
+    text = text.replace(encoded_proxy_who_upper.lower(), "")
     
     return text
 
@@ -148,17 +148,21 @@ def rewrite_response_bytes(body_bytes: bytes, local_host: str) -> bytes:
     body_bytes = body_bytes.replace(b"https://sdk-os.mpsdk.easebar.com", f"http://{local_host}/proxy_sdk".encode('utf-8'))
     body_bytes = body_bytes.replace(b"https://who.nie.easebar.com", f"http://{local_host}/proxy_who".encode('utf-8'))
     
-    # 處理 URL 編碼的網址替換 (safe="")
-    # 大寫
-    encoded_sdk_target_upper = urllib.parse.quote(f"http://{local_host}/proxy_sdk", safe="")
-    encoded_who_target_upper = urllib.parse.quote(f"http://{local_host}/proxy_who", safe="")
-    
-    body_bytes = body_bytes.replace(b"https%3A%2F%2Fsdk-os.mpsdk.easebar.com", encoded_sdk_target_upper.encode('utf-8'))
-    body_bytes = body_bytes.replace(b"https%3A%2F%2Fwho.nie.easebar.com", encoded_who_target_upper.encode('utf-8'))
-    
-    # 小寫
-    body_bytes = body_bytes.replace(b"https%3a%2f%2fsdk-os.mpsdk.easebar.com", encoded_sdk_target_upper.lower().encode('utf-8'))
-    body_bytes = body_bytes.replace(b"https%3a%2f%2fwho.nie.easebar.com", encoded_who_target_upper.lower().encode('utf-8'))
+    hosts_to_replace = list(set([local_host, "127.0.0.1:8826", "localhost:8826"]))
+    for h in hosts_to_replace:
+        if not h:
+            continue
+        # 處理 URL 編碼的網址替換 (safe="")
+        # 大寫
+        encoded_sdk_target_upper = urllib.parse.quote(f"http://{h}/proxy_sdk", safe="")
+        encoded_who_target_upper = urllib.parse.quote(f"http://{h}/proxy_who", safe="")
+        
+        body_bytes = body_bytes.replace(b"https%3A%2F%2Fsdk-os.mpsdk.easebar.com", encoded_sdk_target_upper.encode('utf-8'))
+        body_bytes = body_bytes.replace(b"https%3A%2F%2Fwho.nie.easebar.com", encoded_who_target_upper.encode('utf-8'))
+        
+        # 小寫
+        body_bytes = body_bytes.replace(b"https%3a%2f%2fsdk-os.mpsdk.easebar.com", encoded_sdk_target_upper.lower().encode('utf-8'))
+        body_bytes = body_bytes.replace(b"https%3a%2f%2fwho.nie.easebar.com", encoded_who_target_upper.lower().encode('utf-8'))
     
     # 處理 HTML/JS 內部的靜態資源相對路徑 (避免資源 404)
     body_bytes = body_bytes.replace(b'"/static/', b'"/proxy_sdk/static/')
@@ -663,6 +667,7 @@ class DiscordBot(discord.Client):
         else:
             target_url = f"https://who.nie.easebar.com/{path}"
 
+        print(f"[DEBUG][ProxyWho] 轉發前 URL: {target_url}")
         headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'content-length', 'origin', 'referer']}
         headers['Origin'] = 'https://www.wherewindsmeetgame.com'
         headers['Referer'] = 'https://www.wherewindsmeetgame.com/'
@@ -730,6 +735,7 @@ class DiscordBot(discord.Client):
         else:
             target_url = f"https://sdk-os.mpsdk.easebar.com/{path}"
 
+        print(f"[DEBUG][ProxySDK] 轉發前 URL: {target_url}")
         headers = {k: v for k, v in request.headers.items() if k.lower() not in ['host', 'content-length', 'origin', 'referer']}
         headers['Origin'] = 'https://www.wherewindsmeetgame.com'
         headers['Referer'] = 'https://www.wherewindsmeetgame.com/'
