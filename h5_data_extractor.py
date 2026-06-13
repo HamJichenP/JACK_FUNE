@@ -107,33 +107,29 @@ class LoginWindow(QMainWindow):
 
 def fetch_role_info(token, cookies, storage_key):
     """
-    使用 requests 模擬 POST 請求獲取角色數據
+    使用 requests 模擬 GET 請求獲取角色數據（根據 HAR 範例，此 API 採用 GET 方法）
     """
     print("\n🚀 開始向官方私有 API 發送數據擷取請求...")
     
     # 建構 API 請求標頭
     headers = {
         "User-Agent": MOBILE_USER_AGENT,
-        "Content-Type": "application/json;charset=UTF-8",
         "Accept": "application/json, text/plain, */*",
         "Origin": "https://www.wherewindsmeetgame.com",
         "Referer": "https://www.wherewindsmeetgame.com/m/2025h5sjgj/tw/"
     }
     
-    # 注入 Token
+    # 根據 HAR 範例，Token 是放入 headers 的 access_token 欄位
     if token:
-        headers["Authorization"] = f"Bearer {token}"
-        headers["token"] = token
         headers["access_token"] = token
-        
-        # 若是從特定 storage 欄位取得，也保險寫入該自訂欄位
-        if storage_key:
-            headers[storage_key] = token
+    elif cookies.get("access_token"):
+        headers["access_token"] = cookies.get("access_token")
+    elif cookies.get("mpay_token"):
+        headers["access_token"] = cookies.get("mpay_token")
 
     try:
-        # 發送 POST 請求 (注入 Cookie 字典與 JSON Payload)
-        # 備註：部分私有 API 可能需要傳入空 json 體 {} 或特定參數以利對接
-        response = requests.post(API_URL, headers=headers, cookies=cookies, json={}, timeout=10)
+        # 發送 GET 請求 (GET 不需傳入 json body)
+        response = requests.get(API_URL, headers=headers, cookies=cookies, timeout=10)
         
         # 處理 401 憑證失效
         if response.status_code == 401:
@@ -148,23 +144,65 @@ def fetch_role_info(token, cookies, storage_key):
         # 取得主資料節點
         role_data = data.get("data", {}) if "data" in data else data
         
+        # 門派對照表 (依據燕雲十六聲流派，若未知則輸出數字)
+        school_names = {
+            1: "無門派/散人",
+            2: "鐵衣",
+            3: "醉花陰",
+            4: "梨花槍",
+            5: "孤鷹",
+            6: "神箭/流派六"  # 根據 HAR 中 school = 6 進行推斷
+        }
+        school_id = role_data.get("school")
+        school_name = school_names.get(school_id, f"流派 {school_id}")
+
+        # 在線時間轉換 (秒 -> 小時)
+        online_seconds = role_data.get("onlineTime", 0)
+        online_hours = round(online_seconds / 3600, 1) if online_seconds else 0
+        
         print("=" * 50)
         print(f"📊 【燕雲十六聲】官方 H5 數據擷取結果")
         print("-" * 50)
+        print(f"👤 角色名稱: {role_data.get('roleName', '未知')}")
+        print(f"🆔 角色 ID  : {role_data.get('roleId', '未知')}")
         print(f"🔹 角色等級 (level): {role_data.get('level', '未知')}")
+        print(f"🔹 流派門派 (school): {school_name}")
         print(f"🔹 風尚值 (fashionScore): {role_data.get('fashionScore', '未知')}")
+        print(f"🔹 武學總修為 (xiuWeiKungFu): {role_data.get('xiuWeiKungFu', '未知')}")
         print(f"🔹 最大修為武學 (maxXiuWeiKungFu): {role_data.get('maxXiuWeiKungFu', '無')}")
+        print(f"⏰ 累計在線時長: {online_hours} 小時")
+        print("-" * 50)
         
-        # 裝備陣列解析 (wearEquipsDetailed)
-        wear_equips = role_data.get("wearEquipsDetailed", [])
+        # 裝備字典解析 (wearEquipsDetailed - HAR 格式為 Dict)
+        wear_equips = role_data.get("wearEquipsDetailed", {})
         print(f"🔹 穿戴裝備詳情 ({len(wear_equips)} 件)：")
         if not wear_equips:
             print("   （無裝備資訊）")
-        for idx, equip in enumerate(wear_equips, 1):
-            name = equip.get("name", "未知名稱")
-            slot = equip.get("slot", "未知部位")
-            quality = equip.get("quality", "未知品質")
-            print(f"   [{idx}] 部位: {slot:<6} | 名稱: {name:<10} | 品質: {quality}")
+        else:
+            # 裝備部位 ID 對照表
+            slot_names = {
+                "1": "主武器",
+                "2": "副武器",
+                "3": "頭部",
+                "4": "上衣",
+                "5": "下裝",
+                "8": "鞋子",
+                "9": "項鍊",
+                "10": "戒指",
+                "11": "護腕",
+                "21": "暗器",
+                "105": "馬具"
+            }
+            for idx, (slot_id, equip_info) in enumerate(wear_equips.items(), 1):
+                if not isinstance(equip_info, dict):
+                    continue
+                equip_no = equip_info.get("no", "未知代碼")
+                ex_vo = equip_info.get("exVo") or {}
+                durability = ex_vo.get("durability", "無") if ex_vo else "無"
+                suffix = ex_vo.get("suffix", "無") if ex_vo else "無"
+                
+                slot_name = slot_names.get(str(slot_id), f"部位 {slot_id}")
+                print(f"   [{idx}] 部位: {slot_name:<6} | 裝備代碼 (no): {equip_no:<8} | 耐久度: {durability:<3} | 後綴品質: {suffix}")
         print("=" * 50)
         
     except requests.exceptions.HTTPError as e:
