@@ -531,14 +531,14 @@ class DiscordBot(discord.Client):
                                 user_id: '{user_id}'
                               }})
                             }})
-                            .then(res => {{
+                            .then(function(res) {{
                               if (res.ok) {{
                                 document.body.innerHTML = '<div style="text-align:center;margin-top:200px;font-family:sans-serif;"><div style="font-size:50px;">✅</div><div style="font-size:24px;color:#2ecc71;margin-top:20px;font-weight:bold;">查詢成功！</div><div style="font-size:16px;color:#7f8c8d;margin-top:10px;">您的武學配置卡片已發送至 Discord 頻道。<br>此視窗現在可以關閉了。</div></div>';
                               }} else {{
                                 alert("❌ 資料傳送失敗，請聯絡管理員確認機器人服務狀態。");
                               }}
                             }})
-                            .catch(err => {{
+                            .catch(function(err) {{
                               alert("❌ 連線錯誤: " + err.message);
                             }});
                           }}
@@ -578,6 +578,9 @@ class DiscordBot(discord.Client):
                     allow_redirects=False
                 ) as resp:
                     body = await resp.read()
+                    
+                    # 輸出代理連線狀態，有助於分析 404 等問題
+                    print(f"[Bot][Proxy] {request.method} /{path} -> Status {resp.status}")
                     
                     res_headers = {k: v for k, v in resp.headers.items() if k.lower() not in ['content-encoding', 'transfer-encoding', 'content-length']}
                     res_headers['Access-Control-Allow-Origin'] = '*'
