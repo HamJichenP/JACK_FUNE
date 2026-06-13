@@ -634,6 +634,18 @@ class DiscordBot(discord.Client):
                       ⚠️ 注意事項：請使用「手機驗證碼」或「網易帳號密碼」進行登入。<br>
                       <span style="font-size:12px;font-weight:normal;opacity:0.9;">（本工具為本機代理環境，不支援 Google/Apple/Steam 等第三方授權跳轉登入）</span>
                     </div>
+                    <style>
+                      /* 強制隱藏會導致跨域跳轉失敗的第三方登入按鈕與區塊 */
+                      img[src*="btn_google"], img[src*="btn_apple"], 
+                      img[src*="btn_steam"], img[src*="btn_epic"], 
+                      img[src*="btn_twitter"], img[src*="btn_psn"] {
+                          display: none !important;
+                      }
+                      /* 隱藏第三方登入的標題或圖示容器，只留下手機與帳密輸入框 */
+                      .third-login, .other-login, [class*="third"], [class*="other"] {
+                          display: none !important;
+                      }
+                    </style>
                     """
                     if '<body>' in html_content:
                         html_content = html_content.replace('<body>', f'<body>{banner_html}')
