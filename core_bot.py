@@ -866,6 +866,12 @@ class DiscordBot(discord.Client):
     async def handle_proxy(self, request: aiohttp.web.Request) -> aiohttp.web.StreamResponse:
         """萬用代理，將所有靜態資源與 API 轉發給官方網站"""
         path = request.match_info.get('path', '')
+        
+        # 智慧攔截 Service Worker，強制回傳 404 以註銷瀏覽器的舊版快取，使最新代理頁面生效
+        if 'sw.js' in path.lower() or 'service-worker.js' in path.lower():
+            print(f"[Bot][Proxy] 攔截 Service Worker 請求: /{path} -> 強制回傳 404 註銷快取")
+            return aiohttp.web.Response(status=404)
+            
         local_host = request.host
         
         query_str = request.query_string
